@@ -10,12 +10,18 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SobreRouteImport } from './routes/sobre'
+import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as BuscarRouteImport } from './routes/buscar'
 import { Route as IndexRouteImport } from './routes/index'
 
 const SobreRoute = SobreRouteImport.update({
   id: '/sobre',
   path: '/sobre',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
+  id: '/sitemap.xml',
+  path: '/sitemap.xml',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BuscarRoute = BuscarRouteImport.update({
@@ -32,30 +38,34 @@ const IndexRoute = IndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/buscar': typeof BuscarRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/buscar': typeof BuscarRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/buscar': typeof BuscarRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/buscar' | '/sobre'
+  fullPaths: '/' | '/buscar' | '/sitemap.xml' | '/sobre'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/buscar' | '/sobre'
-  id: '__root__' | '/' | '/buscar' | '/sobre'
+  to: '/' | '/buscar' | '/sitemap.xml' | '/sobre'
+  id: '__root__' | '/' | '/buscar' | '/sitemap.xml' | '/sobre'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BuscarRoute: typeof BuscarRoute
+  SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   SobreRoute: typeof SobreRoute
 }
 
@@ -66,6 +76,13 @@ declare module '@tanstack/react-router' {
       path: '/sobre'
       fullPath: '/sobre'
       preLoaderRoute: typeof SobreRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sitemap.xml': {
+      id: '/sitemap.xml'
+      path: '/sitemap.xml'
+      fullPath: '/sitemap.xml'
+      preLoaderRoute: typeof SitemapDotxmlRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/buscar': {
@@ -88,8 +105,19 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BuscarRoute: BuscarRoute,
+  SitemapDotxmlRoute: SitemapDotxmlRoute,
   SobreRoute: SobreRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

@@ -1,0 +1,10 @@
+# CotaçãoIA
+
+> Motor de busca semântica para pesquisa de preços em licitações públicas brasileiras, alinhado à Lei nº 14.133/2021.
+
+CotaçãoIA consulta fontes oficiais (PNCP, Compras.gov.br, Portais da Transparência) e ranqueia resultados por compatibilidade técnica, jurídica e geográfica usando IA.
+
+## Pages
+- [Início](/): visão geral e busca inicial
+- [Pesquisar](/buscar): interface de pesquisa com filtros e exportação
+- [Sobre](/sobre): conformidade legal e fontes utilizadas
