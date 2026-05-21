@@ -189,6 +189,9 @@ async function getEmbeddings(texts: string[], apiKey: string): Promise<number[][
 interface RawItem {
   id?: string | number;
   numero?: string;
+  numero_sequencial?: string | number | null;
+  numero_sequencial_compra_ata?: string | number | null;
+  numero_controle_pncp?: string | null;
   ano?: string | number;
   title?: string;
   description?: string;
@@ -216,6 +219,7 @@ interface RawItem {
   situacao_nome?: string;
   situacao?: string;
   tipo_documento?: string;
+  document_type?: string;
   item_url?: string;
   url?: string;
   /** Marca explicitamente o tipo do valor (preenchido pelo enrichWithPNCPItems). */
@@ -227,12 +231,48 @@ interface RawItem {
 function parsePncpPublicUrl(url?: string): { cnpj: string; ano: string; sequencial: string; tipo?: string } | null {
   if (!url) return null;
   try {
-    const u = new URL(url);
-    const m = u.pathname.match(/\/app\/(editais|compras|atas|contratos)\/(\d{14})\/(\d{4})\/(\d+)/i);
+    const u = /^https?:\/\//i.test(url) ? new URL(url) : new URL(url, "https://pncp.gov.br/app");
+    const m = u.pathname.match(/\/(?:app\/)?(editais|compras|atas|contratos)\/(\d{14})\/(\d{4})\/(\d+)/i);
     if (!m) return null;
     return { tipo: m[1], cnpj: m[2], ano: m[3], sequencial: String(Number(m[4])) };
   } catch {
     return null;
+  }
+}
+
+function parseNumeroControlePncpCompra(value?: unknown): { cnpj: string; ano: string; sequencial: string } | null {
+  const s = String(value ?? "").trim();
+  const m = s.match(/(\d{14})-1-0*(\d+)\/(\d{4})/);
+  if (!m) return null;
+  return { cnpj: m[1], sequencial: String(Number(m[2])), ano: m[3] };
+}
+
+async function resolvePncpCompraFromContract(
+  cnpj: string,
+  ano: string | number,
+  sequencialContrato: string | number,
+): Promise<{ cnpj: string; ano: string; sequencial: string; fornecedor?: string } | null> {
+  const seq = String(Number(String(sequencialContrato).replace(/\D/g, "")) || sequencialContrato);
+  const url = `https://pncp.gov.br/pncp-api/v1/orgaos/${cnpj}/contratos/${ano}/${seq}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12_000);
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as Record<string, unknown>;
+    const compra = parseNumeroControlePncpCompra(data.numeroControlePncpCompra ?? data.numeroControlePNCPCompra);
+    if (!compra) return null;
+    return {
+      ...compra,
+      fornecedor: typeof data.nomeRazaoSocialFornecedor === "string" ? data.nomeRazaoSocialFornecedor : undefined,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
