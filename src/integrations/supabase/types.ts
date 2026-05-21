@@ -14,6 +14,48 @@ export type Database = {
   }
   public: {
     Tables: {
+      cnpj_cache: {
+        Row: {
+          ativo: boolean | null
+          cnae_descricao: string | null
+          cnae_principal: string | null
+          cnpj: string
+          fetched_at: string
+          municipio: string | null
+          nome_fantasia: string | null
+          payload: Json | null
+          razao_social: string | null
+          situacao: string | null
+          uf: string | null
+        }
+        Insert: {
+          ativo?: boolean | null
+          cnae_descricao?: string | null
+          cnae_principal?: string | null
+          cnpj: string
+          fetched_at?: string
+          municipio?: string | null
+          nome_fantasia?: string | null
+          payload?: Json | null
+          razao_social?: string | null
+          situacao?: string | null
+          uf?: string | null
+        }
+        Update: {
+          ativo?: boolean | null
+          cnae_descricao?: string | null
+          cnae_principal?: string | null
+          cnpj?: string
+          fetched_at?: string
+          municipio?: string | null
+          nome_fantasia?: string | null
+          payload?: Json | null
+          razao_social?: string | null
+          situacao?: string | null
+          uf?: string | null
+        }
+        Relationships: []
+      }
       price_sources: {
         Row: {
           category: string
@@ -85,6 +127,8 @@ export type Database = {
           query_norm: string
           score_final: number | null
           search_id: string | null
+          source_excerpt: string | null
+          source_payload_raw: Json | null
           titulo: string
           uf: string | null
           unidade: string | null
@@ -113,6 +157,8 @@ export type Database = {
           query_norm: string
           score_final?: number | null
           search_id?: string | null
+          source_excerpt?: string | null
+          source_payload_raw?: Json | null
           titulo: string
           uf?: string | null
           unidade?: string | null
@@ -141,6 +187,8 @@ export type Database = {
           query_norm?: string
           score_final?: number | null
           search_id?: string | null
+          source_excerpt?: string | null
+          source_payload_raw?: Json | null
           titulo?: string
           uf?: string | null
           unidade?: string | null
@@ -235,6 +283,39 @@ export type Database = {
           reason?: string | null
           snapshot?: Json | null
           source?: string
+        }
+        Relationships: []
+      }
+      source_runs: {
+        Row: {
+          count: number
+          created_at: string
+          error: string | null
+          id: string
+          search_id: string | null
+          source_id: string
+          status: string
+          took_ms: number
+        }
+        Insert: {
+          count?: number
+          created_at?: string
+          error?: string | null
+          id?: string
+          search_id?: string | null
+          source_id: string
+          status: string
+          took_ms?: number
+        }
+        Update: {
+          count?: number
+          created_at?: string
+          error?: string | null
+          id?: string
+          search_id?: string | null
+          source_id?: string
+          status?: string
+          took_ms?: number
         }
         Relationships: []
       }
