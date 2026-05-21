@@ -14,7 +14,42 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      search_feedback: {
+        Row: {
+          action: string
+          created_at: string
+          id: string
+          item_id: string
+          query: string
+          query_norm: string
+          reason: string | null
+          snapshot: Json | null
+          source: string
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          id?: string
+          item_id: string
+          query: string
+          query_norm: string
+          reason?: string | null
+          snapshot?: Json | null
+          source: string
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          id?: string
+          item_id?: string
+          query?: string
+          query_norm?: string
+          reason?: string | null
+          snapshot?: Json | null
+          source?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
