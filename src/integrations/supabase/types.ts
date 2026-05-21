@@ -117,12 +117,16 @@ export type Database = {
           embedding: string | null
           embedding_at: string | null
           embedding_status: string | null
+          extraction_quality: string | null
           fingerprint: string
           fornecedor: string | null
           homologado: boolean | null
           id: string
+          math_delta_pct: number | null
+          math_status: string | null
           modalidade: string | null
           municipio: string | null
+          objeto_estruturado: string | null
           orgao: string | null
           origem: string | null
           payload: Json
@@ -145,6 +149,7 @@ export type Database = {
           valor_inferido_status: string | null
           valor_tipo: string | null
           valor_total: number | null
+          valor_total_calculado: number | null
         }
         Insert: {
           cnpj?: string | null
@@ -155,12 +160,16 @@ export type Database = {
           embedding?: string | null
           embedding_at?: string | null
           embedding_status?: string | null
+          extraction_quality?: string | null
           fingerprint: string
           fornecedor?: string | null
           homologado?: boolean | null
           id?: string
+          math_delta_pct?: number | null
+          math_status?: string | null
           modalidade?: string | null
           municipio?: string | null
+          objeto_estruturado?: string | null
           orgao?: string | null
           origem?: string | null
           payload: Json
@@ -183,6 +192,7 @@ export type Database = {
           valor_inferido_status?: string | null
           valor_tipo?: string | null
           valor_total?: number | null
+          valor_total_calculado?: number | null
         }
         Update: {
           cnpj?: string | null
@@ -193,12 +203,16 @@ export type Database = {
           embedding?: string | null
           embedding_at?: string | null
           embedding_status?: string | null
+          extraction_quality?: string | null
           fingerprint?: string
           fornecedor?: string | null
           homologado?: boolean | null
           id?: string
+          math_delta_pct?: number | null
+          math_status?: string | null
           modalidade?: string | null
           municipio?: string | null
+          objeto_estruturado?: string | null
           orgao?: string | null
           origem?: string | null
           payload?: Json
@@ -221,6 +235,7 @@ export type Database = {
           valor_inferido_status?: string | null
           valor_tipo?: string | null
           valor_total?: number | null
+          valor_total_calculado?: number | null
         }
         Relationships: [
           {
