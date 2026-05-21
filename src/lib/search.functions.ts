@@ -963,10 +963,10 @@ export const searchPrices = createServerFn({ method: "POST" })
     for (const v of variants.slice(0, 3)) {
       // PNCP público via web: encontra páginas de processos e, em seguida,
       // o enrich transforma essas páginas em ITENS granulares via /itens.
-      tasks.push(fetchFirecrawlWeb(v, ["pncp.gov.br"]));
-      tasks.push(fetchFirecrawlWeb(v, siteFilters));
-      if (tceDomains.length > 0) tasks.push(fetchFirecrawlWeb(v, tceDomains));
-      if (govFederal.length > 0) tasks.push(fetchFirecrawlWeb(v, govFederal));
+      tasks.push(fetchFirecrawlWeb(v, ["pncp.gov.br"], catalog));
+      tasks.push(fetchFirecrawlWeb(v, siteFilters, catalog));
+      if (tceDomains.length > 0) tasks.push(fetchFirecrawlWeb(v, tceDomains, catalog));
+      if (govFederal.length > 0) tasks.push(fetchFirecrawlWeb(v, govFederal, catalog));
       // Cotação com fornecedores reais (catálogos / fabricantes / distribuidores)
       tasks.push(fetchFirecrawlSuppliers(v));
     }
