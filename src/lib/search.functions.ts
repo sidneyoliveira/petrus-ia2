@@ -117,6 +117,8 @@ function looksLikeProcessNumberTitle(text: string): boolean {
   if (!text) return true;
   const t = text.trim();
   if (t.length < 4) return true;
+  if (/portal\s+nacional\s+de\s+contrata[cç][oõ]es\s+p[uú]blicas/i.test(t)) return true;
+  if (/^n[º°o.]?\s*(?:pe|pp|preg[aã]o|dispensa|concorr[eê]ncia|edital|ata|contrato|processo)\s*\d+\s*\/\s*\d{4}/i.test(t)) return true;
   // Padrões: "nº 123456", "n° 12/2024", "Ata 12/2024", "PCP 3/2026 - ..."
   const re = /^(?:n[º°o.]?\s*)?(?:ata|edital|preg[aã]o(?:\s+eletr[oô]nico)?|pcp|tp|rdc|concorr[eê]ncia|dispensa|inexigibilidade|contrato|processo|empenho)?\s*[nº°.]*\s*\d{1,8}\s*[\/\-]?\s*\d{0,6}(?:\s*[-–]\s*[A-Za-zÀ-ÿ ]{0,40})?$/i;
   if (re.test(t)) return true;
@@ -225,6 +227,8 @@ interface RawItem {
   /** Marca explicitamente o tipo do valor (preenchido pelo enrichWithPNCPItems). */
   _valorTipo?: PriceResult["valorTipo"];
   _supplier?: boolean;
+  _sourceDomain?: string;
+  _sourceName?: string;
   [k: string]: unknown;
 }
 
