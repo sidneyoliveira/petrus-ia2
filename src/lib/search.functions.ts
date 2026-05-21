@@ -1793,6 +1793,10 @@ export const searchPrices = createServerFn({ method: "POST" })
     // Mineração de anexos (PDFs/HTML de Atas e Termos de Homologação)
     // Roda só na variante principal para limitar custo do Firecrawl.
     tasks.push(mineAttachments(data.query));
+    // Rodada E — portais privados (PCP/BLL/BNC/Licitações-e): descobre páginas
+    // de processo via Firecrawl-search com site: e extrai itens (tríade) via
+    // scrapeAndMine. Cobre licitações municipais ausentes do PNCP.
+    tasks.push(minePortais(data.query));
     const settled = await Promise.allSettled(tasks);
     let raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
 
