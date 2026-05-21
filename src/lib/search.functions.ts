@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { PriceResult, SearchResponse, SearchSourceStatus } from "./types";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Json } from "@/integrations/supabase/types";
+import { safeUnitValue } from "./pncp-rules";
 
 const asJson = <T,>(v: T): Json => v as unknown as Json;
 
@@ -1540,23 +1541,12 @@ function toResult(raw: RawItem): PriceResult {
       ? ranked[1].s
       : undefined;
   const descricao = objetoRaw || processoRaw || titulo;
-  // Prioriza valor UNITÁRIO/HOMOLOGADO do item sobre valor total do processo
-  const valor =
-    typeof raw.valor_unitario_homologado === "number"
-      ? raw.valor_unitario_homologado
-      : typeof raw.valor_unitario_estimado === "number"
-        ? raw.valor_unitario_estimado
-        : typeof raw.valor_unitario === "number"
-          ? raw.valor_unitario
-          : typeof raw.valor_homologado === "number"
-            ? raw.valor_homologado
-            : typeof raw.valor_estimado === "number"
-              ? raw.valor_estimado
-              : typeof raw.valor_global === "number"
-                ? raw.valor_global
-                : typeof raw.valorTotalEstimado === "number"
-                  ? raw.valorTotalEstimado
-                  : null;
+  // Prioriza valor UNITÁRIO/HOMOLOGADO. REGRA INVIOLÁVEL: se a linha só tem
+  // valor global (lote/processo inteiro) e não há quantidade conhecida para
+  // derivar o unitário, `valor` fica null — NUNCA exibimos preço de lote no
+  // lugar do unitário. Ver src/lib/pncp-rules.ts + testes.
+  const safe = safeUnitValue(raw);
+  const valor = safe.valor;
   const data = raw.data_publicacao_pncp || raw.data || "";
   const situacao = (raw.situacao_nome || raw.situacao || "").toString();
   const homologado = /homologad|adjudicad|conclu/i.test(situacao) || (raw.tipo_documento || "").includes("ata");
@@ -1570,16 +1560,9 @@ function toResult(raw: RawItem): PriceResult {
         : "outro";
   const id = String(raw.id ?? `${raw.numero ?? ""}-${raw.ano ?? ""}-${Math.random().toString(36).slice(2, 8)}`);
 
-  // Tipo de valor — preferência ao já marcado pelo enrich
-  const valorTipo: PriceResult["valorTipo"] =
-    raw._valorTipo ??
-    (typeof raw.valor_unitario_homologado === "number"
-      ? "unitario_homologado"
-      : typeof raw.valor_unitario_estimado === "number" || typeof raw.valor_unitario === "number"
-        ? "unitario_estimado"
-        : typeof raw.valor_global === "number" || typeof raw.valorTotalEstimado === "number"
-          ? "global"
-          : "desconhecido");
+  // Tipo de valor — preferência ao já marcado pelo enrich, senão usa a
+  // regra pura (safeUnitValue) que já garantiu null no `valor` global.
+  const valorTipo: PriceResult["valorTipo"] = raw._valorTipo ?? safe.valorTipo;
 
   return {
     id,
@@ -1592,13 +1575,7 @@ function toResult(raw: RawItem): PriceResult {
     valorTotal:
       typeof raw.valor_total_item === "number"
         ? raw.valor_total_item
-        : typeof raw.valor_global === "number"
-          ? raw.valor_global
-          : typeof raw.valorTotalEstimado === "number"
-            ? raw.valorTotalEstimado
-            : typeof raw.quantidade === "number" && typeof valor === "number"
-              ? raw.quantidade * valor
-              : valor,
+        : safe.valorTotal,
     valorTipo,
     fornecedor: raw.fornecedor ?? (raw._supplier ? raw.orgao_nome : undefined),
     orgao: raw.orgao_nome,
