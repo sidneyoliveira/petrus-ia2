@@ -592,10 +592,8 @@ function ResultsSkeleton() {
 }
 
 function SourceStrip({
-  loading,
   sources,
 }: {
-  loading: boolean;
   sources?: { name: string; domain?: string; total: number }[];
 }) {
   const fallback = ["PNCP", "Compras.gov.br", "TCE-CE", "TCEs/portais oficiais", "Fornecedores"];
@@ -604,10 +602,7 @@ function SourceStrip({
     : fallback.map((name) => ({ name, total: 0 }));
   return (
     <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-      <span className="inline-flex items-center gap-1 pr-1">
-        {loading && <Loader2 className="h-3 w-3 animate-spin" />}
-        {loading ? "Pesquisando em" : "Fontes consultadas"}
-      </span>
+      <span className="inline-flex items-center gap-1 pr-1">Fontes consultadas</span>
       {list.map((source) => (
         <span
           key={`${source.name}-${source.domain ?? ""}`}
@@ -619,6 +614,128 @@ function SourceStrip({
         </span>
       ))}
     </div>
+  );
+}
+
+/**
+ * Log rotativo durante a varredura — passa por cada fonte oficial a cada ~700ms
+ * pra mostrar ao usuário que o sistema está vivo e onde está buscando.
+ */
+function LiveSearchLog() {
+  const stages = useMemo(
+    () => [
+      "PNCP (Portal Nacional de Contratações Públicas)",
+      "Compras.gov.br",
+      "Portal da Transparência",
+      "TCE-CE",
+      "Transparência de Itarema",
+      "Diários Oficiais municipais",
+      "Atas de Registro de Preços",
+      "Bases de fornecedores",
+    ],
+    [],
+  );
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setIdx((i) => (i + 1) % stages.length), 700);
+    return () => clearInterval(t);
+  }, [stages.length]);
+  return (
+    <div className="mt-3 inline-flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1 text-[11px] font-mono text-muted-foreground">
+      <Loader2 className="h-3 w-3 animate-spin text-accent" />
+      <span>
+        Buscando em <span className="text-foreground">{stages[idx]}</span>
+        <span className="text-muted-foreground">…</span>
+      </span>
+    </div>
+  );
+}
+
+function Pager({
+  page,
+  totalPages,
+  pageSize,
+  total,
+  start,
+  end,
+  onPage,
+  onPageSize,
+}: {
+  page: number;
+  totalPages: number;
+  pageSize: number;
+  total: number;
+  start: number;
+  end: number;
+  onPage: (p: number) => void;
+  onPageSize: (n: number) => void;
+}) {
+  // Janela compacta de páginas: 1 … p-1 p p+1 … N
+  const pages: (number | "ellipsis")[] = useMemo(() => {
+    const set = new Set<number>([1, totalPages, page, page - 1, page + 1]);
+    const arr = [...set].filter((n) => n >= 1 && n <= totalPages).sort((a, b) => a - b);
+    const out: (number | "ellipsis")[] = [];
+    for (let i = 0; i < arr.length; i++) {
+      out.push(arr[i]);
+      if (i < arr.length - 1 && arr[i + 1] - arr[i] > 1) out.push("ellipsis");
+    }
+    return out;
+  }, [page, totalPages]);
+
+  const go = (p: number) => onPage(Math.min(totalPages, Math.max(1, p)));
+  const btn = "inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-border bg-card px-2 text-xs tabular-nums hover:bg-secondary transition-smooth disabled:opacity-40 disabled:pointer-events-none";
+
+  return (
+    <nav
+      aria-label="Paginação"
+      className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-border bg-card/60 px-3 py-2"
+    >
+      <div className="text-xs text-muted-foreground">
+        Exibindo <span className="font-medium text-foreground tabular-nums">{total === 0 ? 0 : start + 1}–{end}</span>{" "}
+        de <span className="font-medium text-foreground tabular-nums">{total}</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <button className={btn} onClick={() => go(1)} disabled={page === 1} aria-label="Primeira página">
+          <ChevronsLeft className="h-3.5 w-3.5" />
+        </button>
+        <button className={btn} onClick={() => go(page - 1)} disabled={page === 1} aria-label="Página anterior">
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </button>
+        {pages.map((p, i) =>
+          p === "ellipsis" ? (
+            <span key={`e-${i}`} className="px-1 text-muted-foreground text-xs">…</span>
+          ) : (
+            <button
+              key={p}
+              onClick={() => go(p)}
+              aria-current={p === page ? "page" : undefined}
+              className={`${btn} ${p === page ? "bg-accent/15 text-accent border-accent/40" : ""}`}
+            >
+              {p}
+            </button>
+          ),
+        )}
+        <button className={btn} onClick={() => go(page + 1)} disabled={page === totalPages} aria-label="Próxima página">
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+        <button className={btn} onClick={() => go(totalPages)} disabled={page === totalPages} aria-label="Última página">
+          <ChevronsRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <label htmlFor="page-size">Por página</label>
+        <select
+          id="page-size"
+          value={pageSize}
+          onChange={(e) => onPageSize(Number(e.target.value))}
+          className="rounded-md border border-input bg-background px-2 py-1 text-xs tabular-nums outline-none focus:ring-2 focus:ring-ring"
+        >
+          {[10, 20, 50, 100].map((n) => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+        </select>
+      </div>
+    </nav>
   );
 }
 
