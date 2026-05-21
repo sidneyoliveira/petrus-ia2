@@ -163,7 +163,7 @@ function Buscar() {
       <main className="flex-1">
         {/* Search bar */}
         <section className="border-b border-border/60 bg-card/40">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 py-5">
+          <div className="mx-auto max-w-none px-4 sm:px-6 py-5">
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -213,7 +213,7 @@ function Buscar() {
           </div>
         </section>
 
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8 grid lg:grid-cols-[260px_1fr] gap-8">
+        <div className="mx-auto max-w-none px-4 sm:px-6 py-8 grid lg:grid-cols-[260px_1fr] gap-8">
           {/* Filters */}
           <aside className="space-y-6">
             <div className="rounded-xl border border-border bg-card p-5 shadow-card sticky top-20">
