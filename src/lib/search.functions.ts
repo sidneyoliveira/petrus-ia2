@@ -1575,13 +1575,7 @@ function toResult(raw: RawItem): PriceResult {
     valorTotal:
       typeof raw.valor_total_item === "number"
         ? raw.valor_total_item
-        : typeof raw.valor_global === "number"
-          ? raw.valor_global
-          : typeof raw.valorTotalEstimado === "number"
-            ? raw.valorTotalEstimado
-            : typeof raw.quantidade === "number" && typeof valor === "number"
-              ? raw.quantidade * valor
-              : valor,
+        : safe.valorTotal,
     valorTipo,
     fornecedor: raw.fornecedor ?? (raw._supplier ? raw.orgao_nome : undefined),
     orgao: raw.orgao_nome,
