@@ -189,6 +189,9 @@ async function getEmbeddings(texts: string[], apiKey: string): Promise<number[][
 interface RawItem {
   id?: string | number;
   numero?: string;
+  numero_sequencial?: string | number | null;
+  numero_sequencial_compra_ata?: string | number | null;
+  numero_controle_pncp?: string | null;
   ano?: string | number;
   title?: string;
   description?: string;
@@ -216,6 +219,7 @@ interface RawItem {
   situacao_nome?: string;
   situacao?: string;
   tipo_documento?: string;
+  document_type?: string;
   item_url?: string;
   url?: string;
   /** Marca explicitamente o tipo do valor (preenchido pelo enrichWithPNCPItems). */
@@ -227,12 +231,48 @@ interface RawItem {
 function parsePncpPublicUrl(url?: string): { cnpj: string; ano: string; sequencial: string; tipo?: string } | null {
   if (!url) return null;
   try {
-    const u = new URL(url);
-    const m = u.pathname.match(/\/app\/(editais|compras|atas|contratos)\/(\d{14})\/(\d{4})\/(\d+)/i);
+    const u = /^https?:\/\//i.test(url) ? new URL(url) : new URL(url, "https://pncp.gov.br/app");
+    const m = u.pathname.match(/\/(?:app\/)?(editais|compras|atas|contratos)\/(\d{14})\/(\d{4})\/(\d+)/i);
     if (!m) return null;
     return { tipo: m[1], cnpj: m[2], ano: m[3], sequencial: String(Number(m[4])) };
   } catch {
     return null;
+  }
+}
+
+function parseNumeroControlePncpCompra(value?: unknown): { cnpj: string; ano: string; sequencial: string } | null {
+  const s = String(value ?? "").trim();
+  const m = s.match(/(\d{14})-1-0*(\d+)\/(\d{4})/);
+  if (!m) return null;
+  return { cnpj: m[1], sequencial: String(Number(m[2])), ano: m[3] };
+}
+
+async function resolvePncpCompraFromContract(
+  cnpj: string,
+  ano: string | number,
+  sequencialContrato: string | number,
+): Promise<{ cnpj: string; ano: string; sequencial: string; fornecedor?: string } | null> {
+  const seq = String(Number(String(sequencialContrato).replace(/\D/g, "")) || sequencialContrato);
+  const url = `https://pncp.gov.br/pncp-api/v1/orgaos/${cnpj}/contratos/${ano}/${seq}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12_000);
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as Record<string, unknown>;
+    const compra = parseNumeroControlePncpCompra(data.numeroControlePncpCompra ?? data.numeroControlePNCPCompra);
+    if (!compra) return null;
+    return {
+      ...compra,
+      fornecedor: typeof data.nomeRazaoSocialFornecedor === "string" ? data.nomeRazaoSocialFornecedor : undefined,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -269,6 +309,10 @@ interface PncpItemRaw {
   valorTotalHomologado?: number;
   situacaoCompraItemNome?: string;
   ncmNbsCodigo?: string;
+}
+
+function validPrice(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 async function fetchPncpItens(
@@ -315,10 +359,18 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
     const parsed = parsePncpPublicUrl((r.item_url as string | undefined) || (r.url as string | undefined));
     const cnpj = (r.orgao_cnpj ?? parsed?.cnpj ?? "").replace(/\D/g, "");
     const ano = r.ano ?? parsed?.ano;
-    const seq = r.numero ? String(r.numero).replace(/\D/g, "") : (parsed?.sequencial ?? "");
+    const seqRaw = r.numero_sequencial_compra_ata ?? r.numero_sequencial ?? r.numero ?? parsed?.sequencial ?? "";
+    const seq = String(seqRaw).replace(/\D/g, "");
     const isPNCP = !r._source || r._source === "PNCP" || r._source === "Transparência" || r._source === "Compras.gov.br";
     if ((isPNCP || parsed) && cnpj.length === 14 && ano && seq && enrichable.length < limit) {
-      enrichable.push({ ...r, orgao_cnpj: cnpj, ano, numero: seq, tipo_documento: r.tipo_documento ?? parsed?.tipo });
+      const tipo = String(r.document_type ?? r.tipo_documento ?? parsed?.tipo ?? "").toLowerCase();
+      enrichable.push({
+        ...r,
+        orgao_cnpj: cnpj,
+        ano,
+        numero: seq,
+        tipo_documento: tipo.includes("contrato") || parsed?.tipo === "contratos" ? "contrato" : (r.tipo_documento ?? r.document_type ?? parsed?.tipo),
+      });
     } else {
       passthrough.push(r);
     }
@@ -330,14 +382,32 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
   for (let i = 0; i < enrichable.length; i += CONCURRENCY) {
     const chunk = enrichable.slice(i, i + CONCURRENCY);
     const part = await Promise.allSettled(
-      chunk.map((r) =>
-        fetchPncpItens(
-          (r.orgao_cnpj ?? "").replace(/\D/g, ""),
-          r.ano!,
-          String(r.numero).replace(/\D/g, ""),
-          String(r.tipo_documento ?? ""),
-        ).then((items) => ({ parent: r, items })),
-      ),
+      chunk.map(async (r) => {
+        let parent = r;
+        let target = {
+          cnpj: (r.orgao_cnpj ?? "").replace(/\D/g, ""),
+          ano: String(r.ano ?? ""),
+          sequencial: String(r.numero).replace(/\D/g, ""),
+        };
+
+        if (String(r.tipo_documento ?? "").toLowerCase().includes("contrato")) {
+          const compra = await resolvePncpCompraFromContract(target.cnpj, target.ano, target.sequencial);
+          if (!compra) return { parent: r, items: [] };
+          target = compra;
+          parent = {
+            ...r,
+            orgao_cnpj: compra.cnpj,
+            ano: compra.ano,
+            numero: compra.sequencial,
+            fornecedor: r.fornecedor ?? compra.fornecedor,
+            tipo_documento: "edital",
+            item_url: `/editais/${compra.cnpj}/${compra.ano}/${compra.sequencial}`,
+          };
+        }
+
+        const items = await fetchPncpItens(target.cnpj, target.ano, target.sequencial, String(parent.tipo_documento ?? ""));
+        return { parent, items };
+      }),
     );
     fetched.push(...part);
   }
@@ -365,10 +435,12 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
     // como fallback de menor prioridade.
     const useItems = relevant.length > 0 ? relevant : items;
     for (const it of useItems) {
-      const unit = it.valorUnitarioHomologado ?? it.valorUnitarioEstimado;
-      const tipoVal: PriceResult["valorTipo"] = it.valorUnitarioHomologado
+      const homologado = validPrice(it.valorUnitarioHomologado);
+      const estimado = validPrice(it.valorUnitarioEstimado);
+      const unit = homologado ?? estimado;
+      const tipoVal: PriceResult["valorTipo"] = homologado
         ? "unitario_homologado"
-        : it.valorUnitarioEstimado
+        : estimado
           ? "unitario_estimado"
           : "desconhecido";
       // Sem valor unitário extraível: mantém só se descrição é específica
@@ -379,8 +451,8 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
         id: `${parent.id ?? `${parent.orgao_cnpj}-${parent.ano}-${parent.numero}`}-it${it.numeroItem ?? Math.random().toString(36).slice(2, 6)}`,
         objeto_compra: it.descricao ?? parent.objeto_compra,
         descricao: it.descricao ?? parent.descricao,
-        valor_unitario_homologado: it.valorUnitarioHomologado,
-        valor_unitario_estimado: it.valorUnitarioEstimado,
+        valor_unitario_homologado: homologado,
+        valor_unitario_estimado: estimado,
         valor_unitario: typeof unit === "number" ? unit : undefined,
         valor_total_item: it.valorTotalHomologado ?? it.valorTotal,
         unidade_medida: it.unidadeMedida ?? parent.unidade_medida,
