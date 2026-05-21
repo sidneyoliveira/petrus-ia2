@@ -250,7 +250,7 @@ function Buscar() {
       <main className="flex-1">
         {/* Search bar */}
         <section className="border-b border-border/60 bg-card/40">
-          <div className="mx-auto max-w-none px-4 sm:px-6 py-5">
+          <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 py-5">
             <h1 className="sr-only">Pesquisar Preços Públicos</h1>
             <form
               onSubmit={(e) => {
