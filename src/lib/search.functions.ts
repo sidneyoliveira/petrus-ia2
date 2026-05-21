@@ -1541,23 +1541,12 @@ function toResult(raw: RawItem): PriceResult {
       ? ranked[1].s
       : undefined;
   const descricao = objetoRaw || processoRaw || titulo;
-  // Prioriza valor UNITÁRIO/HOMOLOGADO do item sobre valor total do processo
-  const valor =
-    typeof raw.valor_unitario_homologado === "number"
-      ? raw.valor_unitario_homologado
-      : typeof raw.valor_unitario_estimado === "number"
-        ? raw.valor_unitario_estimado
-        : typeof raw.valor_unitario === "number"
-          ? raw.valor_unitario
-          : typeof raw.valor_homologado === "number"
-            ? raw.valor_homologado
-            : typeof raw.valor_estimado === "number"
-              ? raw.valor_estimado
-              : typeof raw.valor_global === "number"
-                ? raw.valor_global
-                : typeof raw.valorTotalEstimado === "number"
-                  ? raw.valorTotalEstimado
-                  : null;
+  // Prioriza valor UNITÁRIO/HOMOLOGADO. REGRA INVIOLÁVEL: se a linha só tem
+  // valor global (lote/processo inteiro) e não há quantidade conhecida para
+  // derivar o unitário, `valor` fica null — NUNCA exibimos preço de lote no
+  // lugar do unitário. Ver src/lib/pncp-rules.ts + testes.
+  const safe = safeUnitValue(raw);
+  const valor = safe.valor;
   const data = raw.data_publicacao_pncp || raw.data || "";
   const situacao = (raw.situacao_nome || raw.situacao || "").toString();
   const homologado = /homologad|adjudicad|conclu/i.test(situacao) || (raw.tipo_documento || "").includes("ata");
