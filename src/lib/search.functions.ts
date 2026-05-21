@@ -226,10 +226,15 @@ async function expandQuery(query: string, apiKey: string | undefined): Promise<s
 
 // Busca aberta via Firecrawl em portais oficiais .gov.br (quando o conector estiver ativo).
 // Caso FIRECRAWL_API_KEY não esteja configurada, retorna [] silenciosamente.
-async function fetchFirecrawlWeb(query: string): Promise<RawItem[]> {
+async function fetchFirecrawlWeb(query: string, siteFilters: string[]): Promise<RawItem[]> {
   const key = process.env.FIRECRAWL_API_KEY;
   if (!key) return [];
-  const q = `${query} (contrato OR ata OR pregão OR licitação) site:gov.br`;
+  // Constrói consulta com OR de domínios priorizados pelo catálogo (price_sources)
+  const sites =
+    siteFilters.length > 0
+      ? `(${siteFilters.slice(0, 8).map((d) => `site:${d}`).join(" OR ")})`
+      : "site:gov.br";
+  const q = `${query} (contrato OR ata OR pregão OR licitação OR homologação) ${sites}`;
   try {
     const res = await fetch("https://api.firecrawl.dev/v2/search", {
       method: "POST",
@@ -237,7 +242,7 @@ async function fetchFirecrawlWeb(query: string): Promise<RawItem[]> {
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ query: q, limit: 15, lang: "pt", country: "br" }),
+      body: JSON.stringify({ query: q, limit: 20, lang: "pt", country: "br" }),
     });
     if (!res.ok) {
       console.warn("Firecrawl search HTTP", res.status);
@@ -245,8 +250,11 @@ async function fetchFirecrawlWeb(query: string): Promise<RawItem[]> {
     }
     const json = (await res.json()) as {
       data?: { web?: Array<{ url?: string; title?: string; description?: string }> } | Array<{ url?: string; title?: string; description?: string }>;
+      web?: Array<{ url?: string; title?: string; description?: string }>;
     };
-    const arr = Array.isArray(json.data) ? json.data : (json.data?.web ?? []);
+    const arr = Array.isArray(json.data)
+      ? json.data
+      : (json.data?.web ?? json.web ?? []);
     return arr.map((r, i): RawItem => ({
       id: `fc-${i}-${(r.url ?? "").slice(-40)}`,
       title: r.title ?? r.url ?? "Resultado web",
@@ -258,6 +266,51 @@ async function fetchFirecrawlWeb(query: string): Promise<RawItem[]> {
   } catch (e) {
     console.warn("Firecrawl error", (e as Error).message);
     return [];
+  }
+}
+
+// Lê catálogo de fontes (price_sources) ordenado por prioridade e taxa de sucesso.
+async function loadActiveSources(): Promise<{ domain: string; name: string }[]> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("price_sources")
+      .select("domain, name, priority, hits, successes")
+      .eq("enabled", true)
+      .order("priority", { ascending: false })
+      .limit(60);
+    if (error || !data) return [];
+    return data.map((d) => ({ domain: d.domain, name: d.name }));
+  } catch {
+    return [];
+  }
+}
+
+// Descobre novos domínios .gov.br a partir das URLs retornadas e os salva no catálogo.
+async function registerDiscoveredDomains(urls: string[], known: Set<string>) {
+  const news = new Map<string, string>();
+  for (const u of urls) {
+    if (!u) continue;
+    try {
+      const host = new URL(u).hostname.replace(/^www\./, "");
+      if (!host.endsWith(".gov.br") && !host.endsWith(".org.br") && !host.endsWith(".com.br")) continue;
+      if (known.has(host)) continue;
+      news.set(host, host);
+      if (news.size >= 5) break;
+    } catch { /* ignore */ }
+  }
+  if (news.size === 0) return;
+  try {
+    const rows = Array.from(news.values()).map((d) => ({
+      name: d,
+      domain: d,
+      category: d.endsWith(".gov.br") ? "auto-gov" : "auto",
+      inciso: "III",
+      priority: 30,
+      discovered_auto: true,
+    }));
+    await supabaseAdmin.from("price_sources").upsert(rows, { onConflict: "domain", ignoreDuplicates: true });
+  } catch (e) {
+    console.warn("registerDiscoveredDomains failed", (e as Error).message);
   }
 }
 
