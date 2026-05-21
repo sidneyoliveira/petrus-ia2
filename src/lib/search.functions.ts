@@ -887,6 +887,11 @@ async function registerDiscoveredDomains(urls: string[], known: Set<string>) {
 
 // Constrói a URL absoluta da página oficial do PNCP a partir dos campos do item.
 function buildPncpUrl(raw: RawItem): string | undefined {
+  // Fontes não-PNCP (TCE-CE, fornecedores, web): preserva url original ou nada.
+  if (raw._source && raw._source !== "PNCP" && raw._source !== "Transparência" && raw._source !== "Compras.gov.br") {
+    const u = (raw.url as string | undefined) || (raw.item_url as string | undefined);
+    return u && /^https?:\/\//i.test(u) ? u : undefined;
+  }
   const tipo = (raw.tipo_documento ?? "").toLowerCase();
   const path = (raw.item_url as string | undefined) || (raw.url as string | undefined);
   if (path && /^https?:\/\//i.test(path)) return path;
