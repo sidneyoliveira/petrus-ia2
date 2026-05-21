@@ -311,6 +311,10 @@ interface PncpItemRaw {
   ncmNbsCodigo?: string;
 }
 
+function validPrice(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 async function fetchPncpItens(
   cnpj: string,
   ano: string | number,
@@ -431,10 +435,12 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
     // como fallback de menor prioridade.
     const useItems = relevant.length > 0 ? relevant : items;
     for (const it of useItems) {
-      const unit = it.valorUnitarioHomologado ?? it.valorUnitarioEstimado;
-      const tipoVal: PriceResult["valorTipo"] = it.valorUnitarioHomologado
+      const homologado = validPrice(it.valorUnitarioHomologado);
+      const estimado = validPrice(it.valorUnitarioEstimado);
+      const unit = homologado ?? estimado;
+      const tipoVal: PriceResult["valorTipo"] = homologado
         ? "unitario_homologado"
-        : it.valorUnitarioEstimado
+        : estimado
           ? "unitario_estimado"
           : "desconhecido";
       // Sem valor unitário extraível: mantém só se descrição é específica
@@ -445,8 +451,8 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
         id: `${parent.id ?? `${parent.orgao_cnpj}-${parent.ano}-${parent.numero}`}-it${it.numeroItem ?? Math.random().toString(36).slice(2, 6)}`,
         objeto_compra: it.descricao ?? parent.objeto_compra,
         descricao: it.descricao ?? parent.descricao,
-        valor_unitario_homologado: it.valorUnitarioHomologado,
-        valor_unitario_estimado: it.valorUnitarioEstimado,
+        valor_unitario_homologado: homologado,
+        valor_unitario_estimado: estimado,
         valor_unitario: typeof unit === "number" ? unit : undefined,
         valor_total_item: it.valorTotalHomologado ?? it.valorTotal,
         unidade_medida: it.unidadeMedida ?? parent.unidade_medida,
