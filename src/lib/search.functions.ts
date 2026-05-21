@@ -984,12 +984,160 @@ async function scrapeAndMine(url: string, label: string): Promise<RawItem[]> {
       seen.add(k);
       return true;
     });
+    // Camada de inferência ontológica (LLM): se regex/HTML extraíram pouco,
+    // delega para o motor de ontologia o trabalho de identificar itens reais
+    // dentro do "lixo textual" (PDFs aglutinados, layouts não-tabulares).
+    if (merged.length < 5 && (md.length > 400 || html.length > 1000)) {
+      const corpus = md && md.length > 400 ? md : html.replace(/<[^>]+>/g, " ");
+      const fromLlm = await ontologicalExtract(corpus, url, label);
+      for (const it of fromLlm) {
+        const k = `${(it.descricao ?? "").slice(0, 80)}|${it.valor_unitario ?? ""}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        merged.push(it);
+      }
+    }
     return merged.slice(0, 60);
   } catch {
     return [];
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ============================================================
+// MOTOR DE INFERÊNCIA ONTOLÓGICA (LLM)
+// ============================================================
+// Recebe texto bruto (markdown de PDF ou HTML denudado) e usa Lovable AI
+// para identificar a "assinatura genética" de itens reais (entidade material
+// + entidade quantitativa + entidade financeira), ignorando objetos de
+// edital, valores globais e ruído jurídico.
+
+const ONTOLOGY_PROMPT = `Você é um Motor de Inferência Ontológica especializado em Contratos Públicos.
+
+Você receberá um texto bruto extraído de PDFs ou HTMLs desestruturados de diversas prefeituras. O texto pode estar quebrado, aglutinado, em formato de tabela ou texto corrido.
+
+Sua missão é escanear o texto e identificar a "Assinatura Genética" de itens de compra. Ignore layouts e foque puramente nas entidades conceituais.
+
+A ONTOLOGIA DE UM ITEM (intersecção OBRIGATÓRIA de 3 atributos):
+1. ENTIDADE MATERIAL/SERVIÇO ESPECÍFICO: algo que pode ser entregue, estocado ou medido (ex.: "Papel A4", "Locação de Impressora 50ppm", "Calça em helanca branca"). NUNCA conceitos abstratos como "Contratação de empresa para...".
+2. ENTIDADE QUANTITATIVA: unidade de medida clara (UN, KG, M2, LOTE, MÊS, SERVIÇO, PCT) atrelada a uma quantidade numérica.
+3. ENTIDADE FINANCEIRA: valor monetário (R$, vírgula com 2 casas). Pode ser unitário e/ou total.
+
+Se o bloco não tiver os 3 juntos, NÃO É UM ITEM (provavelmente é o objeto do edital ou texto jurídico).
+
+HEURÍSTICA AGLUTINADO: PDFs frequentemente juntam tudo em uma linha só, ex.:
+"01 LOCAÇÃO DE IMPRESSORA MULTIFUNCIONAL UND 12 150,00 1800,00 HP M428FDW"
+→ desc="LOCAÇÃO DE IMPRESSORA MULTIFUNCIONAL HP M428FDW", unidade="UND", quantidade=12, valor_unitario=150.00, valor_total=1800.00.
+
+EXCLUSÕES:
+- Valores globais de ata/processo sem produto específico → IGNORE.
+- Se Quantidade × Unitário não bater nem aproximadamente com Total e não houver explicação lógica → descarte.
+
+SAÍDA: retorne APENAS um JSON no formato {"itens": [...]} onde cada item tem as chaves: "descricao" (string), "unidade" (string), "quantidade" (number), "valor_unitario" (number), "valor_total" (number). Use ponto como separador decimal. Se nenhum item válido for detectado, retorne {"itens": []}.`;
+
+async function ontologicalExtract(
+  text: string,
+  sourceUrl: string,
+  sourceLabel: string,
+): Promise<RawItem[]> {
+  const apiKey = process.env.LOVABLE_API_KEY;
+  if (!apiKey || !text) return [];
+  // Janela: foca trechos com densidade de tabela / preços.
+  const MAX = 18_000;
+  let corpus = text;
+  if (corpus.length > MAX) {
+    const re = /\b(item|descric[aã]o|especifica[cç][aã]o|quantidade|qtd|valor\s+unit|valor\s+total|unidade|und|pre[cç]o|r\$)\b/gi;
+    const wins: string[] = [];
+    const W = 2500;
+    let lastEnd = -W;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(corpus)) !== null) {
+      const s = Math.max(0, m.index - W / 2);
+      if (s < lastEnd) continue;
+      const e = Math.min(corpus.length, m.index + W / 2);
+      wins.push(corpus.slice(s, e));
+      lastEnd = e;
+      if (wins.join("\n---\n").length > MAX) break;
+    }
+    corpus = wins.length > 0 ? wins.join("\n---\n").slice(0, MAX) : corpus.slice(0, MAX);
+  }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20_000);
+  let content = "";
+  try {
+    const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: ONTOLOGY_PROMPT },
+          { role: "user", content: `Texto bruto:\n\n${corpus}` },
+        ],
+        temperature: 0.1,
+        response_format: { type: "json_object" },
+      }),
+      signal: ctrl.signal,
+    });
+    if (!r.ok) return [];
+    const j = (await r.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    content = j.choices?.[0]?.message?.content ?? "";
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+  let parsed: { itens?: Array<Record<string, unknown>> } = {};
+  try {
+    const m = content.match(/\{[\s\S]*\}/);
+    parsed = JSON.parse(m ? m[0] : content);
+  } catch {
+    return [];
+  }
+  const arr = Array.isArray(parsed.itens) ? parsed.itens : [];
+  const host = (() => { try { return new URL(sourceUrl).hostname.replace(/^www\./, ""); } catch { return undefined; } })();
+  const docType: RawItem["tipo_documento"] = /ata/i.test(sourceUrl)
+    ? "ata"
+    : /contrato/i.test(sourceUrl)
+      ? "contrato"
+      : "outro";
+  const out: RawItem[] = [];
+  for (let i = 0; i < arr.length && out.length < 80; i++) {
+    const it = arr[i];
+    const desc = cleanItemTitle(String(it.descricao ?? "").trim());
+    if (!desc || desc.length < 6) continue;
+    if (looksLikeProcessNumberTitle(desc)) continue;
+    const toNum = (v: unknown): number | undefined => {
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
+      if (typeof v === "string") return parsePriceBR(v) ?? parseQtyBR(v);
+      return undefined;
+    };
+    const valUnit = toNum(it.valor_unitario);
+    const valTotal = toNum(it.valor_total);
+    const qtd = toNum(it.quantidade);
+    const un = it.unidade ? String(it.unidade).toUpperCase().slice(0, 8) : undefined;
+    if (!valUnit && !valTotal) continue;
+    if (!qtd && !un) continue; // exige entidade quantitativa
+    out.push({
+      id: `mined-llm-${i}-${sourceUrl.slice(-30)}`,
+      objeto_compra: desc,
+      descricao: desc,
+      unidade_medida: un,
+      quantidade: qtd,
+      valor_unitario_homologado: valUnit,
+      valor_unitario: valUnit,
+      valor_total_item: valTotal ?? (qtd && valUnit ? qtd * valUnit : undefined),
+      tipo_documento: docType,
+      url: sourceUrl,
+      _source: sourceLabel,
+      _sourceName: sourceLabel,
+      _sourceDomain: host,
+      _valorTipo: valUnit ? "unitario_homologado" : "global",
+      situacao_nome: "Homologado",
+    });
+  }
+  return out;
 }
 
 /**
