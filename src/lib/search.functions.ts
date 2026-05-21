@@ -15,6 +15,8 @@ const FilterSchema = z.object({
   pagina: z.number().int().min(1).max(50).optional(),
   keywords: z.array(z.string().min(1).max(60)).max(20).optional(),
   mode: z.enum(["semantic", "exact", "all_keywords"]).optional(),
+  /** Quando true, ignora cache e refaz a varredura completa. */
+  forceRefresh: z.boolean().optional(),
 });
 
 const FORBIDDEN = [
