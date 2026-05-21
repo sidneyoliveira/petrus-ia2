@@ -255,8 +255,9 @@ function Buscar() {
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                navigate({ to: "/buscar", search: { q: input.trim() } });
-                refetch();
+                const v = input.trim();
+                navigate({ to: "/buscar", search: { q: v } });
+                if (v.length >= 2) refetch();
               }}
               className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 shadow-card"
               aria-label="Pesquisar item"
