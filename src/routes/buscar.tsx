@@ -536,6 +536,7 @@ function Buscar() {
                     savedIds={saved}
                     onAddToBasket={(it) => basket.toggle(it, q)}
                     basketIds={basket.ids}
+                    query={q}
                   />
                 ) : (
                   <div className="flex flex-col gap-3">
