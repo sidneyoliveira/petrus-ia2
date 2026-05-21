@@ -301,12 +301,15 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
   }
 
   const expanded: RawItem[] = [];
+  const parentsFallback: RawItem[] = [];
   for (const s of fetched) {
     if (s.status !== "fulfilled") continue;
     const { parent, items } = s.value;
     if (!items || items.length === 0) {
-      // Sem itens individuais — DESCARTA. O usuário pediu cotação por ITEM,
-      // não por processo. Mostrar o "objeto do contrato" inteiro confunde.
+      // Sem itens individuais — guarda como FALLBACK (processo inteiro),
+      // tagueado como "global" para o ranqueador empurrar pra baixo, mas
+      // ainda assim aparecer caso não haja itens unitários suficientes.
+      parentsFallback.push({ ...parent, _valorTipo: "global" });
       continue;
     }
     // Filtra itens cuja descrição tem ao menos 1 token da consulta
@@ -316,10 +319,10 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
       if (qTokens.length === 0) return true;
       return qTokens.some((t) => d.includes(t));
     });
-    // Se nenhum item bater com a query, descarta — esse processo não tem
-    // o item buscado (era só objeto correlato).
-    if (relevant.length === 0) continue;
-    const useItems = relevant;
+    // Se nenhum item bater com a query, NÃO descarta: pega os itens com
+    // valor unitário mesmo assim (podem ser variantes/sinônimos) e marca
+    // como fallback de menor prioridade.
+    const useItems = relevant.length > 0 ? relevant : items;
     for (const it of useItems) {
       const unit = it.valorUnitarioHomologado ?? it.valorUnitarioEstimado;
       const tipoVal: PriceResult["valorTipo"] = it.valorUnitarioHomologado
@@ -327,8 +330,9 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
         : it.valorUnitarioEstimado
           ? "unitario_estimado"
           : "desconhecido";
-      // Sem valor unitário extraível também não serve como cotação
-      if (typeof unit !== "number" || unit <= 0) continue;
+      // Sem valor unitário extraível: mantém só se descrição é específica
+      // (o cliente ainda pode usar como evidência manual).
+      if ((typeof unit !== "number" || unit <= 0) && !it.descricao) continue;
       expanded.push({
         ...parent,
         id: `${parent.id ?? `${parent.orgao_cnpj}-${parent.ano}-${parent.numero}`}-it${it.numeroItem ?? Math.random().toString(36).slice(2, 6)}`,
@@ -336,7 +340,7 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
         descricao: it.descricao ?? parent.descricao,
         valor_unitario_homologado: it.valorUnitarioHomologado,
         valor_unitario_estimado: it.valorUnitarioEstimado,
-        valor_unitario: unit,
+        valor_unitario: typeof unit === "number" ? unit : undefined,
         unidade_medida: it.unidadeMedida ?? parent.unidade_medida,
         quantidade: it.quantidade,
         situacao: it.situacaoCompraItemNome ?? parent.situacao,
@@ -345,23 +349,21 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
     }
   }
 
-  // Passthrough (Firecrawl/outros): só mantém se já tiver valor unitário.
-  // Sem unitário, não é cotação por item — descarta.
-  const kept = passthrough.filter((r) => {
-    const hasUnit =
-      typeof r.valor_unitario_homologado === "number" ||
-      typeof r.valor_unitario_estimado === "number" ||
-      typeof r.valor_unitario === "number";
-    return hasUnit;
-  }).map((r) => ({
+  // Passthrough (Firecrawl/web): SEMPRE mantém. Resultado web é evidência
+  // qualitativa — o usuário pode abrir a fonte e validar o preço manualmente.
+  // O ranqueador vai empurrar resultados sem unitário pra baixo.
+  const kept = passthrough.map((r) => ({
     ...r,
-    _valorTipo: (r._valorTipo ??
-      (typeof r.valor_unitario_homologado === "number"
-        ? "unitario_homologado"
-        : "unitario_estimado")) as PriceResult["valorTipo"],
+    _valorTipo:
+      (r._valorTipo ??
+        (typeof r.valor_unitario_homologado === "number"
+          ? "unitario_homologado"
+          : typeof r.valor_unitario_estimado === "number" || typeof r.valor_unitario === "number"
+            ? "unitario_estimado"
+            : "desconhecido")) as PriceResult["valorTipo"],
   }));
 
-  return [...expanded, ...kept];
+  return [...expanded, ...parentsFallback, ...kept];
 }
 
 // Compras.gov.br — endpoint público de contratos (Dados Abertos)
