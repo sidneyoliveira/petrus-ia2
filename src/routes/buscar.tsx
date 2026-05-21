@@ -137,6 +137,24 @@ function Buscar() {
     return arr;
   }, [data, filters, sortBy]);
 
+  // Estatísticas — apenas valores UNITÁRIOS confiáveis, com remoção de outliers (IQR)
+  const stats = useMemo(() => {
+    const vals = filtered
+      .filter((r) => r.valorTipo === "unitario_homologado" || r.valorTipo === "unitario_estimado")
+      .map((r) => r.valor!)
+      .filter((v): v is number => typeof v === "number" && v > 0)
+      .sort((a, b) => a - b);
+    if (vals.length === 0) return null;
+    const q = (p: number) => vals[Math.min(vals.length - 1, Math.floor(p * (vals.length - 1)))];
+    const q1 = q(0.25); const q3 = q(0.75); const iqr = q3 - q1;
+    const lo = q1 - 1.5 * iqr; const hi = q3 + 1.5 * iqr;
+    const clean = vals.filter((v) => v >= lo && v <= hi);
+    const base = clean.length >= 3 ? clean : vals;
+    const mean = base.reduce((s, v) => s + v, 0) / base.length;
+    const median = base[Math.floor(base.length / 2)];
+    return { n: base.length, removidos: vals.length - base.length, mean, median, min: base[0], max: base[base.length - 1] };
+  }, [filtered]);
+
   // Infinite scroll
   useEffect(() => {
     if (!sentinelRef.current) return;
