@@ -25,6 +25,12 @@ export const Route = createFileRoute("/buscar")({
     meta: [
       { title: "Pesquisar preços · CotaçãoIA" },
       { name: "description", content: "Pesquisa semântica de preços em fontes oficiais com ranqueamento por compatibilidade técnica e jurídica." },
+      { property: "og:title", content: "Pesquisar preços · CotaçãoIA" },
+      { property: "og:description", content: "Pesquisa semântica de preços em fontes oficiais com ranqueamento por compatibilidade técnica e jurídica." },
+      { property: "og:url", content: "https://petrus-ia.lovable.app/buscar" },
+    ],
+    links: [
+      { rel: "canonical", href: "https://petrus-ia.lovable.app/buscar" },
     ],
   }),
 });
@@ -218,6 +224,7 @@ function Buscar() {
         {/* Search bar */}
         <section className="border-b border-border/60 bg-card/40">
           <div className="mx-auto max-w-none px-4 sm:px-6 py-5">
+            <h1 className="sr-only">Pesquisar Preços Públicos</h1>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -225,6 +232,7 @@ function Buscar() {
                 refetch();
               }}
               className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 shadow-card"
+              aria-label="Pesquisar item"
             >
               <Search className="h-4 w-4 text-muted-foreground shrink-0" />
               <input
@@ -233,6 +241,7 @@ function Buscar() {
                 placeholder="Descreva o item a cotar — ex. impressora multifuncional laser monocromática"
                 className="flex-1 bg-transparent outline-none text-sm py-1.5"
                 autoFocus
+                aria-label="Termo de pesquisa"
               />
               {isFetching && <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />}
               <button type="submit" className="hidden sm:inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 transition-smooth">

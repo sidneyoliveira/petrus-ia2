@@ -8,6 +8,12 @@ export const Route = createFileRoute("/sobre")({
     meta: [
       { title: "Sobre · CotaçãoIA" },
       { name: "description", content: "CotaçãoIA é um motor de pesquisa semântica para preços públicos alinhado à Lei nº 14.133/2021 — Art. 23." },
+      { property: "og:title", content: "Sobre · CotaçãoIA" },
+      { property: "og:description", content: "CotaçãoIA é um motor de pesquisa semântica para preços públicos alinhado à Lei nº 14.133/2021 — Art. 23." },
+      { property: "og:url", content: "https://petrus-ia.lovable.app/sobre" },
+    ],
+    links: [
+      { rel: "canonical", href: "https://petrus-ia.lovable.app/sobre" },
     ],
   }),
 });
