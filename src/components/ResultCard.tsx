@@ -1,6 +1,9 @@
-import { Award, Building2, Calendar, MapPin, Tag, ExternalLink, Bookmark } from "lucide-react";
+import { Award, Building2, Calendar, MapPin, Tag, ExternalLink, Bookmark, ThumbsUp, ThumbsDown } from "lucide-react";
 import type { PriceResult } from "@/lib/types";
 import { ScoreBar } from "./ScoreBar";
+import { useServerFn } from "@tanstack/react-start";
+import { submitFeedback } from "@/lib/feedback.functions";
+import { useState } from "react";
 
 function brl(v?: number | null) {
   if (typeof v !== "number") return "—";
@@ -23,9 +26,39 @@ interface Props {
   onOpen: (item: PriceResult) => void;
   onSave?: (item: PriceResult) => void;
   saved?: boolean;
+  query?: string;
 }
 
-export function ResultCard({ item, onOpen, onSave, saved }: Props) {
+export function ResultCard({ item, onOpen, onSave, saved, query }: Props) {
+  const sendFeedback = useServerFn(submitFeedback);
+  const [feedback, setFeedback] = useState<"accept" | "reject" | null>(null);
+  const [sending, setSending] = useState(false);
+
+  const handleFeedback = async (action: "accept" | "reject") => {
+    if (feedback || sending) return;
+    setSending(true);
+    setFeedback(action);
+    try {
+      await sendFeedback({
+        data: {
+          query: query || item.titulo,
+          itemId: item.id,
+          source: item.origem,
+          action,
+          snapshot: {
+            titulo: item.titulo,
+            valor: item.valor,
+            orgao: item.orgao,
+          },
+        },
+      });
+    } catch (e) {
+      console.warn("feedback err", e);
+      setFeedback(null);
+    } finally {
+      setSending(false);
+    }
+  };
   return (
     <article className="group relative rounded-xl border border-border bg-card shadow-card transition-smooth hover:-translate-y-0.5 hover:shadow-elegant overflow-hidden">
       <div className="p-5">
@@ -124,18 +157,40 @@ export function ResultCard({ item, onOpen, onSave, saved }: Props) {
 
       <div className="px-5 py-3 border-t border-border/60 bg-secondary/30 flex items-center justify-between">
         <button onClick={() => onOpen(item)} className="text-xs font-medium text-primary hover:underline">
-          Ver detalhes completos
+          Ver detalhes
         </button>
-        {item.url && (
-          <a
-            href={item.url}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-smooth"
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => handleFeedback("accept")}
+            disabled={!!feedback || sending}
+            title="Marcar como útil — ajuda a IA a aprender"
+            className={`inline-flex h-7 w-7 items-center justify-center rounded-md border border-border transition-smooth disabled:opacity-60 ${
+              feedback === "accept" ? "bg-success/15 text-success border-success/40" : "hover:bg-secondary"
+            }`}
           >
-            Fonte <ExternalLink className="h-3 w-3" />
-          </a>
-        )}
+            <ThumbsUp className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={() => handleFeedback("reject")}
+            disabled={!!feedback || sending}
+            title="Não compatível — IA aprende a descartar"
+            className={`inline-flex h-7 w-7 items-center justify-center rounded-md border border-border transition-smooth disabled:opacity-60 ${
+              feedback === "reject" ? "bg-destructive/15 text-destructive border-destructive/40" : "hover:bg-secondary"
+            }`}
+          >
+            <ThumbsDown className="h-3.5 w-3.5" />
+          </button>
+          {item.url && (
+            <a
+              href={item.url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="ml-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-smooth"
+            >
+              Fonte <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+        </div>
       </div>
     </article>
   );

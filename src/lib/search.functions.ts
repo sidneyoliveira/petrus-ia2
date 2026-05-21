@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import type { PriceResult, SearchResponse } from "./types";
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 const FilterSchema = z.object({
   query: z.string().min(2).max(200),
@@ -127,6 +128,41 @@ async function fetchPNCP(query: string, pagina: number): Promise<RawItem[]> {
   }
 }
 
+// Compras.gov.br — endpoint público de contratos (Dados Abertos)
+// Faz busca alternativa por palavra-chave em contratos, com fallback silencioso.
+async function fetchComprasGov(query: string): Promise<RawItem[]> {
+  const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=contrato&ordenacao=-data&pagina=1&pagina_tam=15&status=todos`;
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { items?: RawItem[]; resultados?: RawItem[] };
+    const items = data.items ?? data.resultados ?? [];
+    return items.map((it) => ({ ...it, _source: "Compras.gov.br" }));
+  } catch (e) {
+    console.warn("Compras.gov.br fetch error", e);
+    return [];
+  }
+}
+
+// Portal da Transparência — atas/registros de preço (variante PNCP filtrada)
+async function fetchTransparencia(query: string): Promise<RawItem[]> {
+  const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=ata&ordenacao=-data&pagina=1&pagina_tam=15&status=todos`;
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { items?: RawItem[]; resultados?: RawItem[] };
+    const items = data.items ?? data.resultados ?? [];
+    return items.map((it) => ({ ...it, _source: "Transparência" }));
+  } catch (e) {
+    console.warn("Transparência fetch error", e);
+    return [];
+  }
+}
+
 function toResult(raw: RawItem): PriceResult {
   const titulo = raw.title || raw.objeto_compra || raw.descricao || raw.description || "Sem título";
   const descricao = raw.description || raw.descricao || raw.objeto_compra || titulo;
@@ -168,7 +204,7 @@ function toResult(raw: RawItem): PriceResult {
     situacao,
     numero: raw.numero,
     ano: raw.ano ? String(raw.ano) : undefined,
-    origem: "PNCP",
+    origem: (raw["_source"] as PriceResult["origem"]) || "PNCP",
     documento,
     url: raw.item_url || raw.url,
     homologado,
@@ -205,8 +241,23 @@ export const searchPrices = createServerFn({ method: "POST" })
     const pagina = data.pagina ?? 1;
     const ultimosMeses = data.ultimosMeses ?? 12;
 
-    const raw = await fetchPNCP(data.query, pagina);
+    // Busca paralela em múltiplas fontes oficiais
+    const settled = await Promise.allSettled([
+      fetchPNCP(data.query, pagina),
+      fetchComprasGov(data.query),
+      fetchTransparencia(data.query),
+    ]);
+    const raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
     let results = raw.map(toResult);
+
+    // Deduplicação por id+titulo (fontes podem retornar os mesmos documentos)
+    const seen = new Set<string>();
+    results = results.filter((r) => {
+      const k = `${r.origem}|${r.id}|${r.titulo}`.toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
 
     // Filtro fontes proibidas (defensivo)
     results = results.filter((r) => {
@@ -261,6 +312,34 @@ export const searchPrices = createServerFn({ method: "POST" })
     });
 
     results.sort((a, b) => b.scoreFinal - a.scoreFinal);
+
+    // Sistema de aprendizado: aplica boost com base em feedback histórico
+    try {
+      const qNorm = tokenize(data.query).slice(0, 8).join(" ");
+      if (qNorm) {
+        const { data: fb } = await supabaseAdmin
+          .from("search_feedback")
+          .select("item_id, action")
+          .eq("query_norm", qNorm)
+          .limit(500);
+        if (fb && fb.length > 0) {
+          const score = new Map<string, number>();
+          for (const row of fb) {
+            const delta = row.action === "accept" ? 0.05 : -0.08;
+            score.set(row.item_id, (score.get(row.item_id) ?? 0) + delta);
+          }
+          results = results.map((r) => {
+            const delta = score.get(r.id);
+            if (!delta) return r;
+            const adj = Math.max(0, Math.min(1, r.scoreFinal + delta));
+            return { ...r, scoreFinal: Math.round(adj * 1000) / 1000 };
+          });
+          results.sort((a, b) => b.scoreFinal - a.scoreFinal);
+        }
+      }
+    } catch (e) {
+      console.warn("learning boost skipped:", (e as Error).message);
+    }
 
     return {
       results,

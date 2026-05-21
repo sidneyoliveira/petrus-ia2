@@ -286,6 +286,7 @@ function Buscar() {
                       onOpen={setOpened}
                       onSave={toggleSave}
                       saved={saved.has(it.id)}
+                      query={q}
                     />
                   ))}
                 </div>
