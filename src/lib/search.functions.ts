@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import type { PriceResult, SearchResponse } from "./types";
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 const FilterSchema = z.object({
   query: z.string().min(2).max(200),
@@ -127,6 +128,41 @@ async function fetchPNCP(query: string, pagina: number): Promise<RawItem[]> {
   }
 }
 
+// Compras.gov.br — endpoint público de contratos (Dados Abertos)
+// Faz busca alternativa por palavra-chave em contratos, com fallback silencioso.
+async function fetchComprasGov(query: string): Promise<RawItem[]> {
+  const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=contrato&ordenacao=-data&pagina=1&pagina_tam=15&status=todos`;
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { items?: RawItem[]; resultados?: RawItem[] };
+    const items = data.items ?? data.resultados ?? [];
+    return items.map((it) => ({ ...it, _source: "Compras.gov.br" }));
+  } catch (e) {
+    console.warn("Compras.gov.br fetch error", e);
+    return [];
+  }
+}
+
+// Portal da Transparência — atas/registros de preço (variante PNCP filtrada)
+async function fetchTransparencia(query: string): Promise<RawItem[]> {
+  const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=ata&ordenacao=-data&pagina=1&pagina_tam=15&status=todos`;
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { items?: RawItem[]; resultados?: RawItem[] };
+    const items = data.items ?? data.resultados ?? [];
+    return items.map((it) => ({ ...it, _source: "Transparência" }));
+  } catch (e) {
+    console.warn("Transparência fetch error", e);
+    return [];
+  }
+}
+
 function toResult(raw: RawItem): PriceResult {
   const titulo = raw.title || raw.objeto_compra || raw.descricao || raw.description || "Sem título";
   const descricao = raw.description || raw.descricao || raw.objeto_compra || titulo;
@@ -168,7 +204,7 @@ function toResult(raw: RawItem): PriceResult {
     situacao,
     numero: raw.numero,
     ano: raw.ano ? String(raw.ano) : undefined,
-    origem: "PNCP",
+    origem: (raw["_source"] as PriceResult["origem"]) || "PNCP",
     documento,
     url: raw.item_url || raw.url,
     homologado,
