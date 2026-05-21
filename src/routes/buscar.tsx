@@ -45,15 +45,10 @@ function Buscar() {
   const [mode, setMode] = useState<"semantic" | "exact" | "all_keywords">("semantic");
   const [filters, setFilters] = useState({
     uf: "" as string,
-    modalidade: "",
     unidade: "",
-    apenasHomologados: false,
-    onlyValor: false,
     minScore: 0,
     valorMin: "" as string,
     valorMax: "" as string,
-    hideLixo: true,
-    onlyMathOk: false,
   });
   const [sortBy, setSortBy] = useState<
     "compat" | "semantico" | "juridico" | "valorAsc" | "valorDesc" | "valorMedio" | "dataRecente"
@@ -144,15 +139,10 @@ function Buscar() {
     const vMax = filters.valorMax ? Number(filters.valorMax.replace(",", ".")) : null;
     let arr = data.results.filter((r) => {
       if (filters.uf && (r.uf ?? "").toUpperCase() !== filters.uf) return false;
-      if (filters.modalidade && !(r.modalidade ?? "").toLowerCase().includes(filters.modalidade.toLowerCase())) return false;
       if (filters.unidade && !(r.unidade ?? "").toLowerCase().includes(filters.unidade.toLowerCase())) return false;
-      if (filters.apenasHomologados && !r.homologado) return false;
-      if (filters.onlyValor && typeof r.valor !== "number") return false;
       if (vMin !== null && !Number.isNaN(vMin) && (r.valor ?? -Infinity) < vMin) return false;
       if (vMax !== null && !Number.isNaN(vMax) && (r.valor ?? Infinity) > vMax) return false;
       if (r.scoreFinal * 100 < filters.minScore) return false;
-      if (filters.hideLixo && r.extractionQuality === "lixo") return false;
-      if (filters.onlyMathOk && !(r.mathStatus === "ok" && r.extractionQuality === "tríade_ok")) return false;
       return true;
     });
 
@@ -163,7 +153,36 @@ function Buscar() {
       : 0;
     const propMid = vMin !== null && vMax !== null && !Number.isNaN(vMin) && !Number.isNaN(vMax) ? (vMin + vMax) / 2 : media;
 
+    // Tier de aderência ao termo pesquisado:
+    // Normaliza (lowercase, sem acento, sem pontuação) e calcula o maior
+    // prefixo contíguo do título-de-busca presente no item. Tier 0 = match
+    // do termo inteiro; cada palavra perdida do final = +1 no tier. Itens
+    // com tier menor sempre vêm antes — só depois aplica a ordenação escolhida.
+    const norm = (s: string) =>
+      (s || "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^\p{L}\p{N}\s]/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    const qWords = norm(q).split(" ").filter(Boolean);
+    const tierOf = (r: PriceResult): number => {
+      if (qWords.length === 0) return 0;
+      const hay = norm(
+        [r.objetoEstruturado, r.titulo, r.descricao].filter(Boolean).join(" "),
+      );
+      for (let n = qWords.length; n >= 1; n--) {
+        const phrase = qWords.slice(0, n).join(" ");
+        if (hay.includes(phrase)) return qWords.length - n;
+      }
+      return qWords.length; // nenhuma palavra do prefixo bateu
+    };
+
     arr = [...arr].sort((a, b) => {
+      const ta = tierOf(a);
+      const tb = tierOf(b);
+      if (ta !== tb) return ta - tb;
       switch (sortBy) {
         case "semantico": return b.scoreSemantico - a.scoreSemantico;
         case "juridico": return b.scoreJuridico - a.scoreJuridico;
@@ -185,7 +204,7 @@ function Buscar() {
       }
     });
     return arr;
-  }, [data, filters, sortBy]);
+  }, [data, filters, sortBy, q]);
 
   // Estatísticas — apenas valores UNITÁRIOS confiáveis, com remoção de outliers (IQR)
   const stats = useMemo(() => {
@@ -318,7 +337,7 @@ function Buscar() {
           </div>
         </section>
 
-        <div className="mx-auto max-w-none px-4 sm:px-6 py-8 grid lg:grid-cols-[260px_1fr] gap-8">
+        <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 py-8 grid lg:grid-cols-[240px_minmax(0,1fr)] gap-6">
           {/* Filters */}
           <aside className="space-y-6">
             <div className="rounded-xl border border-border bg-card p-5 shadow-card sticky top-20">
@@ -347,7 +366,7 @@ function Buscar() {
                   onChange={(e) => setMode(e.target.value as typeof mode)}
                   className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
                 >
-                  <option value="semantic">Semelhante (IA + sinônimos)</option>
+                  <option value="semantic">Semelhante (IA)</option>
                   <option value="all_keywords">Todas as palavras do título</option>
                   <option value="exact">Exata (sem expansão)</option>
                 </select>
@@ -380,16 +399,6 @@ function Buscar() {
                     <option value="">Todas</option>
                     {UFS.map((u) => <option key={u} value={u}>{u}</option>)}
                   </select>
-                </div>
-
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1.5 block">Modalidade</label>
-                  <input
-                    value={filters.modalidade}
-                    onChange={(e) => setFilters({ ...filters, modalidade: e.target.value })}
-                    placeholder="Ex. pregão, dispensa"
-                    className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
-                  />
                 </div>
 
                 <div>
@@ -433,45 +442,8 @@ function Buscar() {
                   <div className="text-[11px] text-muted-foreground tabular-nums">≥ {filters.minScore}%</div>
                 </div>
 
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={filters.apenasHomologados}
-                    onChange={(e) => setFilters({ ...filters, apenasHomologados: e.target.checked })}
-                    className="h-4 w-4 rounded border-input accent-accent"
-                  />
-                  <span className="text-sm">Apenas homologados</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={filters.onlyValor}
-                    onChange={(e) => setFilters({ ...filters, onlyValor: e.target.checked })}
-                    className="h-4 w-4 rounded border-input accent-accent"
-                  />
-                  <span className="text-sm">Apenas com valor</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={filters.onlyMathOk}
-                    onChange={(e) => setFilters({ ...filters, onlyMathOk: e.target.checked })}
-                    className="h-4 w-4 rounded border-input accent-accent"
-                  />
-                  <span className="text-sm">Apenas matemática ✓ (Qtd × Unit = Total)</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={filters.hideLixo}
-                    onChange={(e) => setFilters({ ...filters, hideLixo: e.target.checked })}
-                    className="h-4 w-4 rounded border-input accent-accent"
-                  />
-                  <span className="text-sm">Ocultar extrações inválidas</span>
-                </label>
-
                 <button
-                  onClick={() => setFilters({ uf: "", modalidade: "", unidade: "", apenasHomologados: false, onlyValor: false, minScore: 0, valorMin: "", valorMax: "", hideLixo: true, onlyMathOk: false })}
+                  onClick={() => setFilters({ uf: "", unidade: "", minScore: 0, valorMin: "", valorMax: "" })}
                   className="w-full mt-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-secondary transition-smooth"
                 >
                   Limpar filtros
@@ -490,7 +462,7 @@ function Buscar() {
           </aside>
 
           {/* Results */}
-          <section>
+          <section className="min-w-0">
             {!q && (
               <EmptyState
                 title="Digite o que você quer cotar"
