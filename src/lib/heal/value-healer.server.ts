@@ -222,7 +222,7 @@ async function buildFewshot(item: HealCandidate, apiKey: string): Promise<string
       query_embedding: emb as unknown as never,
       match_count: FEWSHOT_LIMIT,
       min_similarity: 0.7,
-      filter_domain: null,
+      filter_domain: undefined,
     });
     rows = (data ?? []) as typeof rows;
   }
