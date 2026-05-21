@@ -15,7 +15,7 @@ import type { PriceResult } from "@/lib/types";
 const UFS = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
 
 const SearchSchema = z.object({
-  q: z.string().optional().default(""),
+  q: z.coerce.string().optional().default(""),
 });
 
 export const Route = createFileRoute("/buscar")({
