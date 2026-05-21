@@ -33,6 +33,8 @@ function Buscar() {
   const navigate = useNavigate();
   const { q } = Route.useSearch();
   const [input, setInput] = useState(q);
+  const [keywordsInput, setKeywordsInput] = useState("");
+  const [mode, setMode] = useState<"semantic" | "exact" | "all_keywords">("semantic");
   const [filters, setFilters] = useState({
     uf: "" as string,
     modalidade: "",
@@ -63,13 +65,28 @@ function Buscar() {
     return () => clearTimeout(t);
   }, [input, q, navigate]);
 
+  const parsedKeywords = useMemo(
+    () =>
+      keywordsInput
+        .split(",")
+        .map((k) => k.trim())
+        .filter((k) => k.length > 0)
+        .slice(0, 20),
+    [keywordsInput],
+  );
+
   const { data, isFetching, error, refetch } = useQuery({
-    queryKey: ["search", q],
+    queryKey: ["search", q, mode, parsedKeywords.join("|")],
     enabled: q.trim().length >= 2,
     staleTime: 60_000,
     queryFn: () =>
       callSearch({
-        data: { query: q.trim(), pagina: 1 },
+        data: {
+          query: q.trim(),
+          pagina: 1,
+          mode,
+          keywords: parsedKeywords.length ? parsedKeywords : undefined,
+        },
       }),
   });
 
