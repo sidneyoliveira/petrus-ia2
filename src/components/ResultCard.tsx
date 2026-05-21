@@ -1,4 +1,4 @@
-import { Award, Building2, Calendar, MapPin, Tag, ExternalLink, Bookmark, ThumbsUp, ThumbsDown, AlertTriangle } from "lucide-react";
+import { Award, Building2, Calendar, MapPin, Tag, ExternalLink, Bookmark, ThumbsUp, ThumbsDown, AlertTriangle, CheckCircle2, AlertCircle, HelpCircle } from "lucide-react";
 import type { PriceResult } from "@/lib/types";
 import { useServerFn } from "@tanstack/react-start";
 import { submitFeedback } from "@/lib/feedback.functions";
@@ -15,6 +15,22 @@ function valorBadge(t?: PriceResult["valorTipo"]) {
     case "global":              return { label: "TOTAL do processo", tone: "bg-destructive/15 text-destructive" };
     default:                    return { label: "valor s/ contexto", tone: "bg-muted text-muted-foreground" };
   }
+}
+function mathBadge(s?: PriceResult["mathStatus"], q?: PriceResult["extractionQuality"]) {
+  if (!s && !q) return null;
+  if (s === "ok" && q === "tríade_ok") {
+    return { label: "matemática ✓", tone: "bg-success/15 text-success", Icon: CheckCircle2, title: "Qtd × Unitário = Total fecha" };
+  }
+  if (s === "divergente") {
+    return { label: "matemática divergente", tone: "bg-destructive/15 text-destructive", Icon: AlertCircle, title: "Qtd × Unitário ≠ Total (>2%) — IA vai reprocessar" };
+  }
+  if (q === "só_global") {
+    return { label: "só valor global", tone: "bg-destructive/15 text-destructive", Icon: AlertTriangle, title: "Sem qtd nem unitário — provavelmente valor total do processo" };
+  }
+  if (q === "sem_unitário" || q === "sem_qtd") {
+    return { label: "tríade incompleta", tone: "bg-muted text-muted-foreground", Icon: HelpCircle, title: "Faltam dados pra fechar a matemática" };
+  }
+  return null;
 }
 function fmtDate(d?: string) {
   if (!d) return "—";
@@ -86,6 +102,19 @@ export function ResultCard({ item, onOpen, onSave, saved, query }: Props) {
                   <Award className="h-3 w-3" /> Homologado
                 </span>
               )}
+              {(() => {
+                const m = mathBadge(item.mathStatus, item.extractionQuality);
+                if (!m) return null;
+                const { Icon } = m;
+                return (
+                  <span
+                    title={m.title}
+                    className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${m.tone}`}
+                  >
+                    <Icon className="h-3 w-3" /> {m.label}
+                  </span>
+                );
+              })()}
             </div>
             <button
               onClick={(e) => { e.stopPropagation(); onSave?.(item); }}
