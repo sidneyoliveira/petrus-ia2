@@ -172,16 +172,18 @@ export async function healValuesBackground(
   }
 
   try {
+    // Candidatos: itens sem valor unitário OU itens cuja matemática divergiu
+    // (Qtd × Unitário ≠ Total > 2%) e que ainda não foram processados pelo healer.
     const { data: candidates, error } = await supabaseAdmin
       .from("quote_items")
       .select(
         "id, titulo, descricao, unidade, quantidade, valor_total, source_excerpt",
       )
       .eq("search_id", searchId)
-      .is("valor", null)
       .is("valor_inferido_status", null)
-      .not("valor_total", "is", null)
       .not("source_excerpt", "is", null)
+      .or("valor.is.null,math_status.eq.divergente")
+      .not("valor_total", "is", null)
       .limit(MAX_ITEMS_PER_RUN);
 
     if (error) {
