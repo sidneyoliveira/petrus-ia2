@@ -164,6 +164,106 @@ async function fetchTransparencia(query: string): Promise<RawItem[]> {
   }
 }
 
+// Expansão inteligente de consulta: gera variações sinônimas via Lovable AI.
+// Falha silenciosamente — devolve apenas a query original em caso de erro.
+async function expandQuery(query: string, apiKey: string | undefined): Promise<string[]> {
+  const base = query.trim();
+  if (!apiKey) return [base];
+  try {
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash-lite",
+        messages: [
+          {
+            role: "system",
+            content:
+              "Você é um especialista em compras públicas brasileiras. Gere 4 variações curtas (3-6 palavras) do termo, usando sinônimos técnicos, plural/singular, e termos equivalentes que aparecem em editais e atas de registro de preço. Responda APENAS um JSON array de strings, sem texto extra. Exemplo: [\"calça juvenil\", \"uniforme escolar calça\", ...]",
+          },
+          { role: "user", content: base },
+        ],
+        temperature: 0.2,
+      }),
+    });
+    if (!res.ok) return [base];
+    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const raw = data.choices?.[0]?.message?.content ?? "[]";
+    const m = raw.match(/\[[\s\S]*\]/);
+    if (!m) return [base];
+    const arr = JSON.parse(m[0]) as unknown;
+    if (!Array.isArray(arr)) return [base];
+    const variants = arr
+      .filter((s): s is string => typeof s === "string")
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 2 && s.length <= 80);
+    return Array.from(new Set([base, ...variants])).slice(0, 5);
+  } catch (e) {
+    console.warn("expandQuery failed:", (e as Error).message);
+    return [base];
+  }
+}
+
+// Busca aberta via Firecrawl em portais oficiais .gov.br (quando o conector estiver ativo).
+// Caso FIRECRAWL_API_KEY não esteja configurada, retorna [] silenciosamente.
+async function fetchFirecrawlWeb(query: string): Promise<RawItem[]> {
+  const key = process.env.FIRECRAWL_API_KEY;
+  if (!key) return [];
+  const q = `${query} (contrato OR ata OR pregão OR licitação) site:gov.br`;
+  try {
+    const res = await fetch("https://api.firecrawl.dev/v2/search", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query: q, limit: 15, lang: "pt", country: "br" }),
+    });
+    if (!res.ok) {
+      console.warn("Firecrawl search HTTP", res.status);
+      return [];
+    }
+    const json = (await res.json()) as {
+      data?: { web?: Array<{ url?: string; title?: string; description?: string }> } | Array<{ url?: string; title?: string; description?: string }>;
+    };
+    const arr = Array.isArray(json.data) ? json.data : (json.data?.web ?? []);
+    return arr.map((r, i): RawItem => ({
+      id: `fc-${i}-${(r.url ?? "").slice(-40)}`,
+      title: r.title ?? r.url ?? "Resultado web",
+      description: r.description ?? "",
+      url: r.url,
+      tipo_documento: /ata/i.test(`${r.title} ${r.url}`) ? "ata" : /contrato/i.test(`${r.title} ${r.url}`) ? "contrato" : /edital|pregao|preg%C3%A3o/i.test(`${r.title} ${r.url}`) ? "edital" : "outro",
+      _source: "Outro",
+    }));
+  } catch (e) {
+    console.warn("Firecrawl error", (e as Error).message);
+    return [];
+  }
+}
+
+// Constrói a URL absoluta da página oficial do PNCP a partir dos campos do item.
+function buildPncpUrl(raw: RawItem): string | undefined {
+  const tipo = (raw.tipo_documento ?? "").toLowerCase();
+  const path = (raw.item_url as string | undefined) || (raw.url as string | undefined);
+  if (path && /^https?:\/\//i.test(path)) return path;
+  if (path && path.startsWith("/")) return `https://pncp.gov.br/app${path}`;
+  const cnpj = (raw.orgao_cnpj ?? "").replace(/\D/g, "");
+  const ano = raw.ano ? String(raw.ano) : "";
+  const seq = raw.numero ? String(raw.numero).replace(/\D/g, "") : "";
+  if (cnpj && ano && seq) {
+    const seg = tipo.includes("ata")
+      ? "atas"
+      : tipo.includes("contrato")
+        ? "contratos"
+        : "editais";
+    return `https://pncp.gov.br/app/${seg}/${cnpj}/${ano}/${seq}`;
+  }
+  return undefined;
+}
+
 function toResult(raw: RawItem): PriceResult {
   const titulo = raw.title || raw.objeto_compra || raw.descricao || raw.description || "Sem título";
   const descricao = raw.description || raw.descricao || raw.objeto_compra || titulo;
