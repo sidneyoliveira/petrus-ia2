@@ -18,9 +18,11 @@ import {
   AlertCircle,
   AlertTriangle,
   HelpCircle,
+  Wrench,
 } from "lucide-react";
 import type { PriceResult } from "@/lib/types";
 import { buildHighlightUrl } from "@/lib/highlight-source";
+import { CorrectionDialog } from "@/components/CorrectionDialog";
 
 function brl(v?: number | null) {
   if (typeof v !== "number") return "—";
@@ -91,6 +93,7 @@ interface Props {
   savedIds?: Set<string>;
   onAddToBasket?: (item: PriceResult) => void;
   basketIds?: Set<string>;
+  query?: string;
 }
 
 export function ResultsTable({
@@ -100,8 +103,11 @@ export function ResultsTable({
   savedIds,
   onAddToBasket,
   basketIds,
+  query = "",
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [correctingId, setCorrectingId] = useState<string | null>(null);
+  const correctingItem = items.find((i) => i.id === correctingId) ?? null;
 
   const toggle = (id: string) =>
     setExpanded((s) => {
@@ -282,6 +288,13 @@ export function ResultsTable({
                                 <Highlighter className="h-3.5 w-3.5" /> Ver com destaque
                               </a>
                             )}
+                            <button
+                              onClick={() => setCorrectingId(item.id)}
+                              className="inline-flex items-center justify-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-smooth"
+                              title="Ensinar a IA: aponte o erro de extração"
+                            >
+                              <Wrench className="h-3.5 w-3.5" /> Corrigir extração
+                            </button>
                           </div>
                         </div>
                       </TableCell>
@@ -293,6 +306,14 @@ export function ResultsTable({
           </TableBody>
         </Table>
       </div>
+      {correctingItem && (
+        <CorrectionDialog
+          open={!!correctingId}
+          onOpenChange={(v) => !v && setCorrectingId(null)}
+          item={correctingItem}
+          query={query}
+        />
+      )}
     </div>
   );
 }
