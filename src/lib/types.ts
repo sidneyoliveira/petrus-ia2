@@ -25,7 +25,6 @@ export interface PriceResult {
   scoreGeografico: number;
   scoreTecnico: number;
   scoreFinal: number;
-  raw?: Record<string, unknown>;
 }
 
 export interface SearchFilters {

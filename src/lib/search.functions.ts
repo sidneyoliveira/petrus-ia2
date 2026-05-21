@@ -178,7 +178,6 @@ function toResult(raw: RawItem): PriceResult {
     scoreGeografico: 0,
     scoreTecnico: 0,
     scoreFinal: 0,
-    raw: raw as Record<string, unknown>,
   };
 }
 
