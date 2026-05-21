@@ -2,6 +2,9 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import type { PriceResult, SearchResponse, SearchSourceStatus } from "./types";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import type { Json } from "@/integrations/supabase/types";
+
+const asJson = <T,>(v: T): Json => v as unknown as Json;
 
 // ============================================================
 // CACHE — quote_searches + quote_items
