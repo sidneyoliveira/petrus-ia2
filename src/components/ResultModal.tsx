@@ -1,7 +1,9 @@
-import { X, ExternalLink, Award, FileSearch, Loader2 } from "lucide-react";
+import { X, ExternalLink, Award, FileSearch, Loader2, Sparkles, CheckCircle2, AlertTriangle, MinusCircle } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import type { PriceResult } from "@/lib/types";
 import { ScoreBar } from "./ScoreBar";
+import { extractItemsFromDocument, type ExtractResponse } from "@/lib/extract.functions";
 
 function brl(v?: number | null) {
   if (typeof v !== "number") return "—";
@@ -24,12 +26,18 @@ export function ResultModal({ item, onClose }: Props) {
   const [ocrText, setOcrText] = useState<string | null>(null);
   const [ocrError, setOcrError] = useState<string | null>(null);
   const [ocrMeta, setOcrMeta] = useState<{ pages?: number; chars?: number; truncated?: boolean } | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiData, setAiData] = useState<ExtractResponse | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const runExtract = useServerFn(extractItemsFromDocument);
 
   useEffect(() => {
     if (!item) return;
     setOcrText(null);
     setOcrError(null);
     setOcrMeta(null);
+    setAiData(null);
+    setAiError(null);
     const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", h);
     document.body.style.overflow = "hidden";
@@ -63,6 +71,22 @@ export function ResultModal({ item, onClose }: Props) {
       setOcrError((e as Error).message);
     } finally {
       setOcrLoading(false);
+    }
+  };
+
+  const runAi = async () => {
+    if (!item.url) return;
+    setAiLoading(true);
+    setAiError(null);
+    setAiData(null);
+    try {
+      const res = await runExtract({ data: { url: item.url, hintQuery: item.titulo } });
+      if (!res.ok && res.error) setAiError(res.relatorio_confiabilidade.avisos || res.error);
+      setAiData(res);
+    } catch (e) {
+      setAiError((e as Error).message);
+    } finally {
+      setAiLoading(false);
     }
   };
 
@@ -157,6 +181,14 @@ export function ResultModal({ item, onClose }: Props) {
                     Abrir fonte original <ExternalLink className="h-3.5 w-3.5" />
                   </a>
                   <button
+                    onClick={runAi}
+                    disabled={aiLoading}
+                    className="inline-flex items-center gap-2 rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-accent-foreground hover:opacity-90 transition-smooth disabled:opacity-60"
+                  >
+                    {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                    Extrair itens reais (IA)
+                  </button>
+                  <button
                     onClick={runOcr}
                     disabled={ocrLoading}
                     className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3.5 py-1.5 text-xs font-medium hover:bg-secondary transition-smooth disabled:opacity-60"
@@ -165,6 +197,10 @@ export function ResultModal({ item, onClose }: Props) {
                     Extrair texto do PDF
                   </button>
                 </div>
+              )}
+
+              {(aiData || aiError || aiLoading) && (
+                <ItemsExtractedPanel loading={aiLoading} error={aiError} data={aiData} />
               )}
 
               {(ocrText || ocrError || ocrLoading) && (
