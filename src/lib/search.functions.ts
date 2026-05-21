@@ -355,10 +355,18 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
     const parsed = parsePncpPublicUrl((r.item_url as string | undefined) || (r.url as string | undefined));
     const cnpj = (r.orgao_cnpj ?? parsed?.cnpj ?? "").replace(/\D/g, "");
     const ano = r.ano ?? parsed?.ano;
-    const seq = r.numero ? String(r.numero).replace(/\D/g, "") : (parsed?.sequencial ?? "");
+    const seqRaw = r.numero_sequencial_compra_ata ?? r.numero_sequencial ?? r.numero ?? parsed?.sequencial ?? "";
+    const seq = String(seqRaw).replace(/\D/g, "");
     const isPNCP = !r._source || r._source === "PNCP" || r._source === "Transparência" || r._source === "Compras.gov.br";
     if ((isPNCP || parsed) && cnpj.length === 14 && ano && seq && enrichable.length < limit) {
-      enrichable.push({ ...r, orgao_cnpj: cnpj, ano, numero: seq, tipo_documento: r.tipo_documento ?? parsed?.tipo });
+      const tipo = String(r.document_type ?? r.tipo_documento ?? parsed?.tipo ?? "").toLowerCase();
+      enrichable.push({
+        ...r,
+        orgao_cnpj: cnpj,
+        ano,
+        numero: seq,
+        tipo_documento: tipo.includes("contrato") || parsed?.tipo === "contratos" ? "contrato" : (r.tipo_documento ?? r.document_type ?? parsed?.tipo),
+      });
     } else {
       passthrough.push(r);
     }
@@ -370,14 +378,32 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
   for (let i = 0; i < enrichable.length; i += CONCURRENCY) {
     const chunk = enrichable.slice(i, i + CONCURRENCY);
     const part = await Promise.allSettled(
-      chunk.map((r) =>
-        fetchPncpItens(
-          (r.orgao_cnpj ?? "").replace(/\D/g, ""),
-          r.ano!,
-          String(r.numero).replace(/\D/g, ""),
-          String(r.tipo_documento ?? ""),
-        ).then((items) => ({ parent: r, items })),
-      ),
+      chunk.map(async (r) => {
+        let parent = r;
+        let target = {
+          cnpj: (r.orgao_cnpj ?? "").replace(/\D/g, ""),
+          ano: String(r.ano ?? ""),
+          sequencial: String(r.numero).replace(/\D/g, ""),
+        };
+
+        if (String(r.tipo_documento ?? "").toLowerCase().includes("contrato")) {
+          const compra = await resolvePncpCompraFromContract(target.cnpj, target.ano, target.sequencial);
+          if (!compra) return { parent: r, items: [] };
+          target = compra;
+          parent = {
+            ...r,
+            orgao_cnpj: compra.cnpj,
+            ano: compra.ano,
+            numero: compra.sequencial,
+            fornecedor: r.fornecedor ?? compra.fornecedor,
+            tipo_documento: "edital",
+            item_url: `/editais/${compra.cnpj}/${compra.ano}/${compra.sequencial}`,
+          };
+        }
+
+        const items = await fetchPncpItens(target.cnpj, target.ano, target.sequencial, String(parent.tipo_documento ?? ""));
+        return { parent, items };
+      }),
     );
     fetched.push(...part);
   }
