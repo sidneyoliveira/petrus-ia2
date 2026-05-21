@@ -1,9 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { Search, Loader2, Sparkles, Download, FileText, FileJson, FileSpreadsheet, SlidersHorizontal, AlertCircle, Database, RefreshCw, LayoutGrid, Rows3 } from "lucide-react";
+import { Search, Loader2, Sparkles, Download, FileText, FileJson, FileSpreadsheet, SlidersHorizontal, AlertCircle, Database, RefreshCw, LayoutGrid, Rows3, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import { ResultCard } from "@/components/ResultCard";
@@ -56,9 +56,25 @@ function Buscar() {
   const [opened, setOpened] = useState<PriceResult | null>(null);
   const [saved, setSaved] = useState<Set<string>>(new Set());
   const basket = useBasket();
-  const [view, setView] = useState<"table" | "cards">("table");
-  const [visible, setVisible] = useState(12);
-  const sentinelRef = useRef<HTMLDivElement>(null);
+  // View padrão = cards (original). Persiste a escolha do usuário no navegador.
+  const [view, setView] = useState<"table" | "cards">(() => {
+    if (typeof window === "undefined") return "cards";
+    const v = window.localStorage.getItem("buscar:view");
+    return v === "table" || v === "cards" ? v : "cards";
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") window.localStorage.setItem("buscar:view", view);
+  }, [view]);
+  // Paginação persistente
+  const [pageSize, setPageSize] = useState<number>(() => {
+    if (typeof window === "undefined") return 20;
+    const n = Number(window.localStorage.getItem("buscar:pageSize"));
+    return [10, 20, 50, 100].includes(n) ? n : 20;
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") window.localStorage.setItem("buscar:pageSize", String(pageSize));
+  }, [pageSize]);
+  const [page, setPage] = useState(1);
 
   const callSearch = useServerFn(searchPrices);
   const queryClient = useQueryClient();
@@ -224,17 +240,13 @@ function Buscar() {
     return { n: base.length, removidos: vals.length - base.length, mean, median, min: base[0], max: base[base.length - 1] };
   }, [filtered]);
 
-  // Infinite scroll
-  useEffect(() => {
-    if (!sentinelRef.current) return;
-    const io = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting) setVisible((v) => Math.min(v + 12, filtered.length));
-    });
-    io.observe(sentinelRef.current);
-    return () => io.disconnect();
-  }, [filtered.length]);
+  // Reset de página quando muda termo/filtros/ordenação/pageSize
+  useEffect(() => setPage(1), [q, filters, sortBy, pageSize]);
 
-  useEffect(() => setVisible(12), [q, filters]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * pageSize;
+  const pageItems = filtered.slice(pageStart, pageStart + pageSize);
 
   const toggleSave = (it: PriceResult) => {
     setSaved((s) => {
@@ -332,9 +344,10 @@ function Buscar() {
                 </div>
               )}
             </div>
-            {(isFetching || data?.sources?.length) && (
-              <SourceStrip loading={isFetching} sources={data?.sources} />
-            )}
+            {isFetching && !data && <LiveSearchLog />}
+            {!isFetching && data?.sources?.length ? (
+              <SourceStrip sources={data.sources} />
+            ) : null}
           </div>
         </section>
 
@@ -503,7 +516,7 @@ function Buscar() {
                 )}
                 {view === "table" ? (
                   <ResultsTable
-                    items={filtered.slice(0, visible)}
+                    items={pageItems}
                     onOpen={setOpened}
                     onSave={toggleSave}
                     savedIds={saved}
@@ -513,7 +526,7 @@ function Buscar() {
                   />
                 ) : (
                   <div className="flex flex-col gap-3">
-                    {filtered.slice(0, visible).map((it) => (
+                    {pageItems.map((it) => (
                       <ResultCard
                         key={it.id}
                         item={it}
@@ -525,12 +538,16 @@ function Buscar() {
                     ))}
                   </div>
                 )}
-                {visible < filtered.length && (
-                  <div ref={sentinelRef} className="flex items-center justify-center py-10 text-muted-foreground text-sm">
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    Carregando mais resultados…
-                  </div>
-                )}
+                <Pager
+                  page={safePage}
+                  totalPages={totalPages}
+                  pageSize={pageSize}
+                  total={filtered.length}
+                  start={pageStart}
+                  end={pageStart + pageItems.length}
+                  onPage={setPage}
+                  onPageSize={setPageSize}
+                />
               </>
             )}
           </section>
