@@ -110,6 +110,10 @@ interface RawItem {
   valor_global?: number;
   valorTotalEstimado?: number;
   valor_estimado?: number;
+  valor_unitario_estimado?: number;
+  valor_unitario_homologado?: number;
+  valor_homologado?: number;
+  valor_unitario?: number;
   unidade_medida?: string;
   orgao_nome?: string;
   orgao_cnpj?: string;
@@ -341,14 +345,23 @@ function toResult(raw: RawItem): PriceResult {
   const titulo = objeto || processo || "Sem título";
   const subtitulo = objeto && processo && objeto !== processo ? processo : undefined;
   const descricao = raw.description || raw.descricao || raw.objeto_compra || titulo;
+  // Prioriza valor UNITÁRIO/HOMOLOGADO do item sobre valor total do processo
   const valor =
-    typeof raw.valor_global === "number"
-      ? raw.valor_global
-      : typeof raw.valor_estimado === "number"
-        ? raw.valor_estimado
-        : typeof raw.valorTotalEstimado === "number"
-          ? raw.valorTotalEstimado
-          : null;
+    typeof raw.valor_unitario_homologado === "number"
+      ? raw.valor_unitario_homologado
+      : typeof raw.valor_unitario_estimado === "number"
+        ? raw.valor_unitario_estimado
+        : typeof raw.valor_unitario === "number"
+          ? raw.valor_unitario
+          : typeof raw.valor_homologado === "number"
+            ? raw.valor_homologado
+            : typeof raw.valor_estimado === "number"
+              ? raw.valor_estimado
+              : typeof raw.valor_global === "number"
+                ? raw.valor_global
+                : typeof raw.valorTotalEstimado === "number"
+                  ? raw.valorTotalEstimado
+                  : null;
   const data = raw.data_publicacao_pncp || raw.data || "";
   const situacao = (raw.situacao_nome || raw.situacao || "").toString();
   const homologado = /homologad|adjudicad|conclu/i.test(situacao) || (raw.tipo_documento || "").includes("ata");
