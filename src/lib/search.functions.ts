@@ -201,8 +201,10 @@ interface RawItem {
   valor_unitario_homologado?: number;
   valor_homologado?: number;
   valor_unitario?: number;
+  valor_total_item?: number;
   unidade_medida?: string;
   quantidade?: number;
+  fornecedor?: string;
   orgao_nome?: string;
   orgao_cnpj?: string;
   unidade_nome?: string;
@@ -218,7 +220,20 @@ interface RawItem {
   url?: string;
   /** Marca explicitamente o tipo do valor (preenchido pelo enrichWithPNCPItems). */
   _valorTipo?: PriceResult["valorTipo"];
+  _supplier?: boolean;
   [k: string]: unknown;
+}
+
+function parsePncpPublicUrl(url?: string): { cnpj: string; ano: string; sequencial: string; tipo?: string } | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    const m = u.pathname.match(/\/app\/(editais|compras|atas|contratos)\/(\d{14})\/(\d{4})\/(\d+)/i);
+    if (!m) return null;
+    return { tipo: m[1], cnpj: m[2], ano: m[3], sequencial: String(Number(m[4])) };
+  } catch {
+    return null;
+  }
 }
 
 async function fetchPNCP(query: string, pagina: number, tamanho = 50): Promise<RawItem[]> {
@@ -262,18 +277,25 @@ async function fetchPncpItens(
   sequencial: string | number,
   tipo: string,
 ): Promise<PncpItemRaw[]> {
-  // tipo: "edital"/"compra" -> /compras/, "ata" -> /atas/, "contrato" -> /contratos/
-  const seg = /ata/i.test(tipo) ? "atas" : /contrato/i.test(tipo) ? "contratos" : "compras";
-  const url = `https://pncp.gov.br/api/consulta/v1/orgaos/${cnpj}/${seg}/${ano}/${sequencial}/itens?pagina=1&tamanhoPagina=50`;
+  // Os itens granulares ficam na API pública do PNCP em /pncp-api/v1/.../compras/.../itens.
+  // A rota antiga /api/consulta/v1 não responde de forma confiável e fazia o sistema manter
+  // o processo inteiro como fallback, exatamente o comportamento incorreto reportado.
+  const seq = String(Number(String(sequencial).replace(/\D/g, "")) || sequencial);
+  const url = `https://pncp.gov.br/pncp-api/v1/orgaos/${cnpj}/compras/${ano}/${seq}/itens?pagina=1&tamanhoPagina=50`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12_000);
   try {
     const res = await fetch(url, {
       headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+      signal: ctrl.signal,
     });
     if (!res.ok) return [];
     const j = (await res.json()) as PncpItemRaw[] | { data?: PncpItemRaw[] };
     return Array.isArray(j) ? j : (j.data ?? []);
   } catch {
     return [];
+  } finally {
+    clearTimeout(timer);
   }
 }
 
