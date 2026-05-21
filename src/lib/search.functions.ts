@@ -275,7 +275,7 @@ async function fetchPncpItens(
   cnpj: string,
   ano: string | number,
   sequencial: string | number,
-  tipo: string,
+  _tipo: string,
 ): Promise<PncpItemRaw[]> {
   // Os itens granulares ficam na API pública do PNCP em /pncp-api/v1/.../compras/.../itens.
   // A rota antiga /api/consulta/v1 não responde de forma confiável e fazia o sistema manter
