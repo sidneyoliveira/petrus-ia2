@@ -1,6 +1,7 @@
 export interface PriceResult {
   id: string;
   titulo: string;
+  subtitulo?: string;
   descricao: string;
   unidade?: string;
   valor?: number | null;
