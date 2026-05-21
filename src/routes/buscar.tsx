@@ -25,6 +25,12 @@ export const Route = createFileRoute("/buscar")({
     meta: [
       { title: "Pesquisar preços · CotaçãoIA" },
       { name: "description", content: "Pesquisa semântica de preços em fontes oficiais com ranqueamento por compatibilidade técnica e jurídica." },
+      { property: "og:title", content: "Pesquisar preços · CotaçãoIA" },
+      { property: "og:description", content: "Pesquisa semântica de preços em fontes oficiais com ranqueamento por compatibilidade técnica e jurídica." },
+      { property: "og:url", content: "https://petrus-ia.lovable.app/buscar" },
+    ],
+    links: [
+      { rel: "canonical", href: "https://petrus-ia.lovable.app/buscar" },
     ],
   }),
 });

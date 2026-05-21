@@ -8,8 +8,30 @@ export const Route = createFileRoute("/")({
   component: Home,
   head: () => ({
     meta: [
-      { title: "CotaçãoIA · Pesquisa inteligente de preços para licitações 14.133" },
-      { name: "description", content: "Motor de busca semântica com IA para pesquisa de preços em PNCP, Compras.gov.br, atas, contratos e empenhos homologados — em conformidade com o Art. 23 da Lei 14.133/2021." },
+      { title: "CotaçãoIA · Pesquisa de preços para licitações" },
+      { name: "description", content: "Busca semântica com IA em PNCP, Compras.gov.br, atas e contratos, conforme Art. 23 da Lei 14.133/2021." },
+      { property: "og:title", content: "CotaçãoIA · Pesquisa de preços para licitações" },
+      { property: "og:description", content: "Busca semântica com IA em PNCP, Compras.gov.br, atas e contratos, conforme Art. 23 da Lei 14.133/2021." },
+      { property: "og:url", content: "https://petrus-ia.lovable.app/" },
+    ],
+    links: [
+      { rel: "canonical", href: "https://petrus-ia.lovable.app/" },
+    ],
+    scripts: [
+      {
+        type: "application/ld+json",
+        children: JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "WebSite",
+          name: "CotaçãoIA",
+          url: "https://petrus-ia.lovable.app/",
+          potentialAction: {
+            "@type": "SearchAction",
+            target: "https://petrus-ia.lovable.app/buscar?q={search_term_string}",
+            "query-input": "required name=search_term_string",
+          },
+        }),
+      },
     ],
   }),
 });
