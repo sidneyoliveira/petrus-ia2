@@ -1432,6 +1432,76 @@ async function mineAttachments(query: string, extraUrls: string[] = []): Promise
   return out;
 }
 
+// ============================================================
+// Rodada E — Portais privados de licitação (PCP / BLL / BNC / Licitações-e)
+// ============================================================
+// Esses portais agregam licitações municipais/estaduais que NÃO chegam ao
+// PNCP, especialmente prefeituras menores. Não há API pública estável —
+// estratégia: Firecrawl `search` com filtro `site:` para descobrir páginas
+// de processo, depois `scrapeAndMine` extrai tríades (qtd × unitário = total).
+//
+// Cada portal vira tarefa paralela no orquestrador; falha silenciosa via [].
+const PORTAIS = [
+  { domain: "portaldecompraspublicas.com.br", name: "Portal de Compras Públicas" },
+  { domain: "bllcompras.com",                 name: "BLL Compras" },
+  { domain: "licitacoes-e.com.br",            name: "Licitações-e (BB)" },
+  { domain: "bnccompras.com",                 name: "BNC Compras" },
+  { domain: "compras.bb.com.br",              name: "Compras BB" },
+] as const;
+
+async function searchPortalUrls(query: string, domain: string, limit = 4): Promise<string[]> {
+  const key = process.env.FIRECRAWL_API_KEY;
+  if (!key) return [];
+  // Termos que isolam páginas de processo/edital homologado dentro do portal
+  const q = `${query} (homologado OR adjudicado OR "ata de registro" OR pregão OR resultado) site:${domain}`;
+  try {
+    const res = await fetch("https://api.firecrawl.dev/v2/search", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: q, limit, lang: "pt", country: "br" }),
+    });
+    if (!res.ok) return [];
+    const j = (await res.json()) as {
+      data?: { web?: Array<{ url?: string }> } | Array<{ url?: string }>;
+      web?: Array<{ url?: string }>;
+    };
+    const arr = Array.isArray(j.data) ? j.data : (j.data?.web ?? j.web ?? []);
+    return arr
+      .map((r) => r.url)
+      .filter((u): u is string => typeof u === "string" && u.includes(domain));
+  } catch (e) {
+    console.warn(`[portais] search ${domain} error`, (e as Error).message);
+    return [];
+  }
+}
+
+async function minePortais(query: string): Promise<RawItem[]> {
+  if (!process.env.FIRECRAWL_API_KEY) return [];
+  // 1) descobre URLs em paralelo, um Firecrawl-search por portal
+  const discovered = await Promise.allSettled(
+    PORTAIS.map((p) => searchPortalUrls(query, p.domain, 3).then((urls) => ({ portal: p, urls }))),
+  );
+  const jobs: Array<{ url: string; label: string }> = [];
+  for (const s of discovered) {
+    if (s.status !== "fulfilled") continue;
+    for (const u of s.value.urls) jobs.push({ url: u, label: s.value.portal.name });
+  }
+  if (jobs.length === 0) return [];
+
+  // 2) scrape-and-mine cada URL (mesmo pipeline de tabelas/ontologia já usado)
+  const CONCURRENCY = 3;
+  const out: RawItem[] = [];
+  for (let i = 0; i < jobs.length; i += CONCURRENCY) {
+    const chunk = jobs.slice(i, i + CONCURRENCY);
+    const settled = await Promise.allSettled(
+      chunk.map((j) => scrapeAndMine(j.url, j.label)),
+    );
+    for (const s of settled) if (s.status === "fulfilled") out.push(...s.value);
+    if (out.length > 200) break;
+  }
+  return out;
+}
+
 // Lê catálogo de fontes (price_sources) ordenado por prioridade e taxa de sucesso.
 async function loadActiveSources(): Promise<{ domain: string; name: string }[]> {
   try {
@@ -1723,6 +1793,10 @@ export const searchPrices = createServerFn({ method: "POST" })
     // Mineração de anexos (PDFs/HTML de Atas e Termos de Homologação)
     // Roda só na variante principal para limitar custo do Firecrawl.
     tasks.push(mineAttachments(data.query));
+    // Rodada E — portais privados (PCP/BLL/BNC/Licitações-e): descobre páginas
+    // de processo via Firecrawl-search com site: e extrai itens (tríade) via
+    // scrapeAndMine. Cobre licitações municipais ausentes do PNCP.
+    tasks.push(minePortais(data.query));
     const settled = await Promise.allSettled(tasks);
     let raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
 
