@@ -67,13 +67,13 @@ export function ResultModal({ item, onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in" onClick={onClose}>
-      <div className="absolute inset-0 bg-foreground/40 backdrop-blur-sm" />
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/60" />
       <div
         onClick={(e) => e.stopPropagation()}
-        className="relative w-full sm:max-w-3xl max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl bg-card border border-border shadow-elegant animate-in slide-in-from-bottom-4"
+        className="relative w-full sm:max-w-3xl max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl bg-card border border-border shadow-lg"
       >
-        <div className="sticky top-0 z-10 glass border-b border-border/60 px-6 py-4 flex items-start justify-between gap-4">
+        <div className="sticky top-0 z-10 bg-card border-b border-border/60 px-6 py-4 flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
               <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-primary">
@@ -86,6 +86,11 @@ export function ResultModal({ item, onClose }: Props) {
               )}
             </div>
             <h2 className="text-lg sm:text-xl font-semibold leading-tight text-balance">{item.titulo}</h2>
+            {item.subtitulo && (
+              <div className="mt-1 text-[11px] uppercase tracking-wider text-muted-foreground truncate">
+                {item.subtitulo}
+              </div>
+            )}
           </div>
           <button onClick={onClose} aria-label="Fechar" className="inline-flex h-9 w-9 items-center justify-center rounded-md hover:bg-secondary transition-smooth">
             <X className="h-4 w-4" />
