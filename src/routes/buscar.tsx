@@ -235,6 +235,30 @@ function Buscar() {
                 </select>
               </div>
 
+              <div className="mb-5">
+                <label className="text-xs text-muted-foreground mb-1.5 block">Tipo de pesquisa</label>
+                <select
+                  value={mode}
+                  onChange={(e) => setMode(e.target.value as typeof mode)}
+                  className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="semantic">Semelhante (IA + sinônimos)</option>
+                  <option value="all_keywords">Todas as palavras do título</option>
+                  <option value="exact">Exata (sem expansão)</option>
+                </select>
+              </div>
+
+              <div className="mb-5">
+                <label className="text-xs text-muted-foreground mb-1.5 block">Palavras-chave obrigatórias</label>
+                <input
+                  value={keywordsInput}
+                  onChange={(e) => setKeywordsInput(e.target.value)}
+                  placeholder="ex.: juvenil, unissex, elástico"
+                  className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+                />
+                <div className="text-[10px] text-muted-foreground mt-1">Separe por vírgula. Todas devem aparecer no item.</div>
+              </div>
+
               <div className="flex items-center gap-2 mb-4">
                 <SlidersHorizontal className="h-4 w-4 text-accent" />
                 <div className="font-semibold text-sm">Filtros</div>
