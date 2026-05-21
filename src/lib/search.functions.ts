@@ -678,10 +678,19 @@ export const searchPrices = createServerFn({ method: "POST" })
     const settled = await Promise.allSettled(tasks);
     let raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
 
+    // 2a) Deduplica raw por (cnpj|ano|numero) antes do enrich (evita chamadas duplicadas)
+    const seenRaw = new Set<string>();
+    raw = raw.filter((r) => {
+      const k = `${r.orgao_cnpj ?? ""}|${r.ano ?? ""}|${r.numero ?? ""}|${(r.title ?? "").slice(0, 60)}`;
+      if (seenRaw.has(k)) return false;
+      seenRaw.add(k);
+      return true;
+    });
+
     // 2b) Enriquece com ITENS individuais do PNCP para ter valor unitário real
     // (a busca do PNCP só devolve processos inteiros — sem isto, o "valor" exibido
-    // acaba sendo o total do lote).
-    raw = await enrichWithPNCPItems(raw, data.query, 12);
+    // acaba sendo o total do lote). Aumentamos o limite para acompanhar o fanout.
+    raw = await enrichWithPNCPItems(raw, data.query, 30);
 
     let results = raw.map(toResult);
 
