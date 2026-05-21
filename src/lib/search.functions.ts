@@ -241,8 +241,23 @@ export const searchPrices = createServerFn({ method: "POST" })
     const pagina = data.pagina ?? 1;
     const ultimosMeses = data.ultimosMeses ?? 12;
 
-    const raw = await fetchPNCP(data.query, pagina);
+    // Busca paralela em múltiplas fontes oficiais
+    const settled = await Promise.allSettled([
+      fetchPNCP(data.query, pagina),
+      fetchComprasGov(data.query),
+      fetchTransparencia(data.query),
+    ]);
+    const raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
     let results = raw.map(toResult);
+
+    // Deduplicação por id+titulo (fontes podem retornar os mesmos documentos)
+    const seen = new Set<string>();
+    results = results.filter((r) => {
+      const k = `${r.origem}|${r.id}|${r.titulo}`.toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
 
     // Filtro fontes proibidas (defensivo)
     results = results.filter((r) => {
@@ -297,6 +312,34 @@ export const searchPrices = createServerFn({ method: "POST" })
     });
 
     results.sort((a, b) => b.scoreFinal - a.scoreFinal);
+
+    // Sistema de aprendizado: aplica boost com base em feedback histórico
+    try {
+      const qNorm = tokenize(data.query).slice(0, 8).join(" ");
+      if (qNorm) {
+        const { data: fb } = await supabaseAdmin
+          .from("search_feedback")
+          .select("item_id, action")
+          .eq("query_norm", qNorm)
+          .limit(500);
+        if (fb && fb.length > 0) {
+          const score = new Map<string, number>();
+          for (const row of fb) {
+            const delta = row.action === "accept" ? 0.05 : -0.08;
+            score.set(row.item_id, (score.get(row.item_id) ?? 0) + delta);
+          }
+          results = results.map((r) => {
+            const delta = score.get(r.id);
+            if (!delta) return r;
+            const adj = Math.max(0, Math.min(1, r.scoreFinal + delta));
+            return { ...r, scoreFinal: Math.round(adj * 1000) / 1000 };
+          });
+          results.sort((a, b) => b.scoreFinal - a.scoreFinal);
+        }
+      }
+    } catch (e) {
+      console.warn("learning boost skipped:", (e as Error).message);
+    }
 
     return {
       results,
