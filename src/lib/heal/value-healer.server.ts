@@ -1,0 +1,236 @@
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
+
+// ============================================================
+// Self-Healing — valor global → valor unitário (Rodada 2)
+// ============================================================
+// Quando um item é persistido sem `valor` (unitário) mas com `valor_total`,
+// passamos o `source_excerpt` para o Lovable AI Gateway e tentamos inferir
+// quantidade + unidade + valor unitário. Roda em background, sem bloquear o
+// retorno da busca, e marca o status para não reprocessar o mesmo item.
+
+const MODEL = "google/gemini-3-flash-preview";
+const MAX_ITEMS_PER_RUN = 15;
+const MIN_EXCERPT_LEN = 40;
+
+interface HealCandidate {
+  id: string;
+  titulo: string | null;
+  descricao: string | null;
+  unidade: string | null;
+  quantidade: number | null;
+  valor_total: number | null;
+  source_excerpt: string | null;
+}
+
+interface InferredValue {
+  quantidade: number | null;
+  unidade: string | null;
+  valor_unitario: number | null;
+  confianca: number; // 0..1
+  motivo: string;
+}
+
+const TOOL = {
+  type: "function" as const,
+  function: {
+    name: "registrar_valor_unitario",
+    description:
+      "Registra a inferência de valor unitário a partir do trecho original. " +
+      "Use confianca >= 0.7 apenas quando quantidade e unidade estão claras no texto.",
+    parameters: {
+      type: "object",
+      properties: {
+        quantidade: {
+          type: ["number", "null"],
+          description: "Quantidade comprada do item (apenas o número).",
+        },
+        unidade: {
+          type: ["string", "null"],
+          description: "Unidade de medida (UN, KG, L, M, CX, etc).",
+        },
+        valor_unitario: {
+          type: ["number", "null"],
+          description:
+            "Valor unitário em reais. Se o texto traz apenas valor_total e " +
+            "quantidade, calcule valor_total / quantidade.",
+        },
+        confianca: {
+          type: "number",
+          description: "0 a 1. 1 = trecho mostra explicitamente o unitário.",
+        },
+        motivo: {
+          type: "string",
+          description: "Justificativa curta (até 140 chars) do que foi inferido.",
+        },
+      },
+      required: ["quantidade", "unidade", "valor_unitario", "confianca", "motivo"],
+      additionalProperties: false,
+    },
+  },
+};
+
+async function inferOne(
+  item: HealCandidate,
+  apiKey: string,
+): Promise<InferredValue | null> {
+  const excerpt = (item.source_excerpt ?? "").slice(0, 2000);
+  if (excerpt.length < MIN_EXCERPT_LEN) return null;
+
+  const system =
+    "Você é um auditor de compras públicas brasileiras. Sua tarefa é, a partir " +
+    "de um trecho de edital/ata/contrato, extrair o VALOR UNITÁRIO de um item " +
+    "quando só temos o valor global. Seja conservador: se não tiver certeza, " +
+    "use confianca baixa (< 0.5) e valor_unitario null.";
+
+  const user = [
+    `Item: ${item.titulo ?? "(sem título)"}`,
+    item.descricao ? `Descrição: ${item.descricao.slice(0, 300)}` : "",
+    item.unidade ? `Unidade conhecida: ${item.unidade}` : "",
+    item.quantidade != null ? `Quantidade conhecida: ${item.quantidade}` : "",
+    item.valor_total != null ? `Valor TOTAL conhecido: R$ ${item.valor_total}` : "",
+    "",
+    "Trecho original:",
+    excerpt,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20_000);
+  try {
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      signal: ctrl.signal,
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        tools: [TOOL],
+        tool_choice: {
+          type: "function",
+          function: { name: "registrar_valor_unitario" },
+        },
+      }),
+    });
+    if (!res.ok) {
+      console.warn(
+        "[heal] gateway error",
+        res.status,
+        await res.text().catch(() => ""),
+      );
+      return null;
+    }
+    const data = (await res.json()) as {
+      choices?: Array<{
+        message?: {
+          tool_calls?: Array<{ function?: { arguments?: string } }>;
+        };
+      }>;
+    };
+    const args =
+      data.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
+    if (!args) return null;
+    const parsed = JSON.parse(args) as Partial<InferredValue>;
+    return {
+      quantidade:
+        typeof parsed.quantidade === "number" ? parsed.quantidade : null,
+      unidade: typeof parsed.unidade === "string" ? parsed.unidade : null,
+      valor_unitario:
+        typeof parsed.valor_unitario === "number" ? parsed.valor_unitario : null,
+      confianca:
+        typeof parsed.confianca === "number"
+          ? Math.max(0, Math.min(1, parsed.confianca))
+          : 0,
+      motivo: String(parsed.motivo ?? "").slice(0, 200),
+    };
+  } catch (e) {
+    console.warn("[heal] infer error", (e as Error).message);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Roda em background depois de uma busca: pega itens da busca atual que
+ * não têm valor unitário e tenta inferir via Lovable AI. Tolerante a falhas.
+ */
+export async function healValuesBackground(
+  searchId: string | null,
+): Promise<void> {
+  if (!searchId) return;
+  const apiKey = process.env.LOVABLE_API_KEY;
+  if (!apiKey) {
+    console.warn("[heal] LOVABLE_API_KEY missing — skip self-healing");
+    return;
+  }
+
+  try {
+    const { data: candidates, error } = await supabaseAdmin
+      .from("quote_items")
+      .select(
+        "id, titulo, descricao, unidade, quantidade, valor_total, source_excerpt",
+      )
+      .eq("search_id", searchId)
+      .is("valor", null)
+      .is("valor_inferido_status", null)
+      .not("valor_total", "is", null)
+      .not("source_excerpt", "is", null)
+      .limit(MAX_ITEMS_PER_RUN);
+
+    if (error) {
+      console.warn("[heal] select failed", error.message);
+      return;
+    }
+    const list = (candidates ?? []) as HealCandidate[];
+    if (list.length === 0) return;
+
+    console.info(`[heal] processing ${list.length} item(s) for search ${searchId}`);
+
+    // Paraleliza com limite manual de 3 concorrentes para não estourar
+    // rate-limit do gateway.
+    const CONCURRENCY = 3;
+    for (let i = 0; i < list.length; i += CONCURRENCY) {
+      const chunk = list.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (item) => {
+          const inferred = await inferOne(item, apiKey);
+          const now = new Date().toISOString();
+          if (!inferred) {
+            await supabaseAdmin
+              .from("quote_items")
+              .update({
+                valor_inferido_status: "failed",
+                valor_inferido_at: now,
+                valor_inferido_reason: "no_response",
+              })
+              .eq("id", item.id);
+            return;
+          }
+          const ok =
+            inferred.valor_unitario != null &&
+            inferred.valor_unitario > 0 &&
+            inferred.confianca >= 0.5;
+          await supabaseAdmin
+            .from("quote_items")
+            .update({
+              valor_inferido: ok ? inferred.valor_unitario : null,
+              valor_inferido_confianca: inferred.confianca,
+              valor_inferido_status: ok ? "ok" : "skipped",
+              valor_inferido_at: now,
+              valor_inferido_reason: inferred.motivo,
+            })
+            .eq("id", item.id);
+        }),
+      );
+    }
+  } catch (e) {
+    console.warn("[heal] background run failed", (e as Error).message);
+  }
+}
