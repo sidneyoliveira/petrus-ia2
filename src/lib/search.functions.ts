@@ -99,6 +99,16 @@ function looksLikeRawDocumentText(text: string): boolean {
   return false;
 }
 
+// Detecta descrição de PROCESSO (não-item): "O objeto do presente contrato é
+// a compra/aquisição de X". Não traz especificação técnica de um item único.
+function looksLikeProcessObject(text: string): boolean {
+  const t = (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (/\bobjeto\s+(do|deste|da|desta)\s+(presente\s+)?(contrato|procedimento|certame|ata|edital|pregao|licitacao|chamamento|dispensa|inexigibilidade)\b/.test(t)) return true;
+  if (/^(o|a)\s+(presente\s+)?(contrato|ata|edital|pregao|procedimento)\b/.test(t)) return true;
+  if (/\b(aquisicao|contratacao|compra|fornecimento|registro\s+de\s+precos)\s+de\b/.test(t) && t.length > 180) return true;
+  return false;
+}
+
 function tokenize(s: string): string[] {
   return (s || "")
     .toLowerCase()
@@ -272,24 +282,31 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
     }
   }
 
-  const fetched = await Promise.allSettled(
-    enrichable.map((r) =>
-      fetchPncpItens(
-        (r.orgao_cnpj ?? "").replace(/\D/g, ""),
-        r.ano!,
-        String(r.numero).replace(/\D/g, ""),
-        String(r.tipo_documento ?? ""),
-      ).then((items) => ({ parent: r, items })),
-    ),
-  );
+  // Concorrência limitada para não estourar o gateway do PNCP
+  const CONCURRENCY = 8;
+  const fetched: PromiseSettledResult<{ parent: RawItem; items: PncpItemRaw[] }>[] = [];
+  for (let i = 0; i < enrichable.length; i += CONCURRENCY) {
+    const chunk = enrichable.slice(i, i + CONCURRENCY);
+    const part = await Promise.allSettled(
+      chunk.map((r) =>
+        fetchPncpItens(
+          (r.orgao_cnpj ?? "").replace(/\D/g, ""),
+          r.ano!,
+          String(r.numero).replace(/\D/g, ""),
+          String(r.tipo_documento ?? ""),
+        ).then((items) => ({ parent: r, items })),
+      ),
+    );
+    fetched.push(...part);
+  }
 
   const expanded: RawItem[] = [];
   for (const s of fetched) {
     if (s.status !== "fulfilled") continue;
     const { parent, items } = s.value;
     if (!items || items.length === 0) {
-      // Sem itens — mantém o processo, mas marca valor como GLOBAL
-      expanded.push({ ...parent, _valorTipo: "global" });
+      // Sem itens individuais — DESCARTA. O usuário pediu cotação por ITEM,
+      // não por processo. Mostrar o "objeto do contrato" inteiro confunde.
       continue;
     }
     // Filtra itens cuja descrição tem ao menos 1 token da consulta
@@ -299,7 +316,10 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
       if (qTokens.length === 0) return true;
       return qTokens.some((t) => d.includes(t));
     });
-    const useItems = relevant.length > 0 ? relevant : items.slice(0, 3);
+    // Se nenhum item bater com a query, descarta — esse processo não tem
+    // o item buscado (era só objeto correlato).
+    if (relevant.length === 0) continue;
+    const useItems = relevant;
     for (const it of useItems) {
       const unit = it.valorUnitarioHomologado ?? it.valorUnitarioEstimado;
       const tipoVal: PriceResult["valorTipo"] = it.valorUnitarioHomologado
@@ -307,6 +327,8 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
         : it.valorUnitarioEstimado
           ? "unitario_estimado"
           : "desconhecido";
+      // Sem valor unitário extraível também não serve como cotação
+      if (typeof unit !== "number" || unit <= 0) continue;
       expanded.push({
         ...parent,
         id: `${parent.id ?? `${parent.orgao_cnpj}-${parent.ano}-${parent.numero}`}-it${it.numeroItem ?? Math.random().toString(36).slice(2, 6)}`,
@@ -323,18 +345,23 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
     }
   }
 
-  // Marca passthrough como GLOBAL quando o valor presente é claramente do processo todo
-  const marked = passthrough.map((r) => {
-    if (r._valorTipo) return r;
-    const hasUnit = typeof r.valor_unitario_homologado === "number" || typeof r.valor_unitario_estimado === "number" || typeof r.valor_unitario === "number";
-    if (hasUnit) return { ...r, _valorTipo: "unitario_estimado" as const };
-    if (typeof r.valor_global === "number" || typeof r.valorTotalEstimado === "number") {
-      return { ...r, _valorTipo: "global" as const };
-    }
-    return r;
-  });
+  // Passthrough (Firecrawl/outros): só mantém se já tiver valor unitário.
+  // Sem unitário, não é cotação por item — descarta.
+  const kept = passthrough.filter((r) => {
+    const hasUnit =
+      typeof r.valor_unitario_homologado === "number" ||
+      typeof r.valor_unitario_estimado === "number" ||
+      typeof r.valor_unitario === "number";
+    return hasUnit;
+  }).map((r) => ({
+    ...r,
+    _valorTipo: (r._valorTipo ??
+      (typeof r.valor_unitario_homologado === "number"
+        ? "unitario_homologado"
+        : "unitario_estimado")) as PriceResult["valorTipo"],
+  }));
 
-  return [...expanded, ...marked];
+  return [...expanded, ...kept];
 }
 
 // Compras.gov.br — endpoint público de contratos (Dados Abertos)
