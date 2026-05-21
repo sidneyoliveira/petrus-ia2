@@ -4,6 +4,8 @@ import type { PriceResult, SearchResponse, SearchSourceStatus } from "./types";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Json } from "@/integrations/supabase/types";
 import { safeUnitValue } from "./pncp-rules";
+import { logSourceRunsBatch, type SourceRunInput } from "./telemetry";
+import { enrichCnpjsBackground } from "./enrich/cnpj";
 
 const asJson = <T,>(v: T): Json => v as unknown as Json;
 
@@ -138,6 +140,13 @@ async function writeCachedSearch(opts: {
       documento: r.documento ?? null,
       score_final: r.scoreFinal ?? null,
       payload: asJson(r),
+      source_payload_raw: asJson({
+        url: r.url ?? null,
+        origem: r.origem ?? null,
+        numero: r.numero ?? null,
+        ano: r.ano ?? null,
+      }),
+      source_excerpt: (r.descricao ?? "").slice(0, 1000),
     }));
     for (let i = 0; i < rows.length; i += 200) {
       const chunk = rows.slice(i, i + 200);
@@ -1903,6 +1912,41 @@ export const searchPrices = createServerFn({ method: "POST" })
       tookMs,
       results,
     });
+
+    // Telemetria por fonte (fire-and-forget) — alimenta painel de saúde.
+    void (async () => {
+      try {
+        const { data: searchRow } = await supabaseAdmin
+          .from("quote_searches")
+          .select("id")
+          .eq("query_norm", query_norm)
+          .eq("filters_hash", fHash)
+          .maybeSingle();
+        const searchId = searchRow?.id ?? null;
+        const counts = new Map<string, number>();
+        for (const r of results) {
+          const key = (r.origem || "desconhecido").toLowerCase().slice(0, 40);
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+        }
+        const rows: SourceRunInput[] = Array.from(counts.entries()).map(
+          ([sourceId, count]) => ({
+            searchId,
+            sourceId,
+            status: count > 0 ? "ok" : "empty",
+            count,
+            tookMs,
+          }),
+        );
+        await logSourceRunsBatch(rows);
+      } catch (e) {
+        console.warn("source_runs log failed", (e as Error).message);
+      }
+    })();
+
+    // Enriquecimento de CNPJs em background (BrasilAPI + cnpj_cache 30d).
+    void enrichCnpjsBackground(
+      results.map((r) => r.cnpj ?? "").filter((c) => c.length > 0).slice(0, 30),
+    );
 
     return {
       results,
