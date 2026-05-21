@@ -840,6 +840,256 @@ async function fetchFirecrawlSuppliers(query: string): Promise<RawItem[]> {
   }
 }
 
+// ============================================================
+// MINERAÇÃO DE ANEXOS (PDFs de Atas / Termos de Homologação) e
+// TABELAS HTML em portais de transparência municipal/estadual.
+// ============================================================
+// Três estratégias plugáveis ao pipeline:
+//   (A) Google Dorking via Firecrawl  → encontra PDFs oficiais
+//   (B) Scrape de PDF/markdown        → regex de itens (ancoragem reversa)
+//   (C) Scrape de tabelas HTML        → <tr><td> com descrição/qtd/valor
+
+// Heurística: linhas de tabela em texto livre seguem o padrão
+// "<desc...> <UN|CX|KG|...> <qtd> <R$ unit> <R$ total>"
+// Parser de ancoragem reversa: localiza pares de R$, recua para qtd/unidade
+// e pega a descrição imediatamente anterior.
+const UNIDADES_RE = /\b(UN|UND|UNID|CX|KG|PC|PCT|PAR|MT|ML|LT|L|CM|M|M2|M3|SC|GL|RL|RES|FR|CJ|SRV|HR|DZ|KIT)\b/i;
+function parsePriceBR(s: string): number | undefined {
+  if (!s) return undefined;
+  const norm = s.replace(/\s/g, "").replace(/\.(?=\d{3}(?:[.,]|$))/g, "").replace(",", ".");
+  const n = parseFloat(norm);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+function parseQtyBR(s: string): number | undefined {
+  if (!s) return undefined;
+  const norm = s.replace(/\s/g, "").replace(/\.(?=\d{3}(?:[.,]|$))/g, "").replace(",", ".");
+  const n = parseFloat(norm);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * Extrai itens estruturados de um texto bruto (markdown ou texto extraído de PDF).
+ * Estratégia: para cada par "<num1> <num2>" que pareça (R$ unitário, R$ total),
+ * recua tokens à esquerda procurando quantidade + unidade + descrição.
+ */
+function extractItemsFromText(text: string, sourceUrl: string, sourceLabel: string): RawItem[] {
+  if (!text || text.length < 60) return [];
+  // Normaliza espaços/quebras
+  const cleaned = text.replace(/\u00A0/g, " ").replace(/[ \t]+/g, " ").replace(/\n{2,}/g, "\n");
+  const lines = cleaned.split("\n").map((l) => l.trim()).filter((l) => l.length > 8);
+  const items: RawItem[] = [];
+  // Padrão 1: linha única "<desc> <UN> <qtd> R$ <unit> R$ <total>"
+  const reLine =
+    /^(?<desc>.+?)\s+(?<un>UN|UND|UNID|CX|KG|PC|PCT|PAR|MT|ML|LT|L|CM|M|M2|M3|SC|GL|RL|RES|FR|CJ|SRV|HR|DZ|KIT)\s+(?<qtd>[\d.]+(?:,\d+)?)\s+(?:R\$\s*)?(?<unit>[\d.]+,\d{2})\s+(?:R\$\s*)?(?<total>[\d.]+,\d{2})\s*$/i;
+  // Padrão 2: separado por |  (tabelas markdown)
+  const reTable =
+    /^\|\s*(?<n>\d+)?\s*\|\s*(?<desc>[^|]{8,400})\|\s*(?<un>[A-Za-z./]{1,8})\s*\|\s*(?<qtd>[\d.,]+)\s*\|\s*R?\$?\s*(?<unit>[\d.]+,\d{2})\s*\|\s*R?\$?\s*(?<total>[\d.]+,\d{2})\s*\|/i;
+
+  let counter = 0;
+  for (const line of lines) {
+    if (counter > 200) break;
+    const mTable = line.match(reTable);
+    const m = mTable ?? line.match(reLine);
+    if (!m || !m.groups) continue;
+    const g = m.groups;
+    const desc = cleanItemTitle(g.desc);
+    if (!desc || desc.length < 6) continue;
+    if (looksLikeProcessNumberTitle(desc)) continue;
+    const valUnit = parsePriceBR(g.unit);
+    const valTotal = parsePriceBR(g.total);
+    const qtd = parseQtyBR(g.qtd);
+    if (!valUnit && !valTotal) continue;
+    counter++;
+    items.push({
+      id: `mined-${counter}-${sourceUrl.slice(-30)}`,
+      objeto_compra: desc,
+      descricao: desc,
+      unidade_medida: g.un?.toUpperCase(),
+      quantidade: qtd,
+      valor_unitario_homologado: valUnit,
+      valor_unitario: valUnit,
+      valor_total_item: valTotal ?? (qtd && valUnit ? qtd * valUnit : undefined),
+      tipo_documento: /ata/i.test(sourceUrl) ? "ata" : /contrato/i.test(sourceUrl) ? "contrato" : "outro",
+      url: sourceUrl,
+      _source: sourceLabel,
+      _sourceName: sourceLabel,
+      _sourceDomain: (() => { try { return new URL(sourceUrl).hostname.replace(/^www\./, ""); } catch { return undefined; } })(),
+      _valorTipo: valUnit ? "unitario_homologado" : "global",
+      situacao_nome: "Homologado",
+    });
+  }
+  return items;
+}
+
+/**
+ * (A) Google Dorking via Firecrawl — busca PDFs oficiais de Atas/Homologação
+ * em portais .gov.br (foco prefeituras / transparência). Devolve URLs candidatas.
+ */
+async function dorkPdfAttachments(query: string): Promise<string[]> {
+  const key = process.env.FIRECRAWL_API_KEY;
+  if (!key) return [];
+  const q = `${query} ("Ata de Registro de Preços" OR "Termo de Homologação" OR "Mapa de Apuração") filetype:pdf site:gov.br`;
+  try {
+    const res = await fetch("https://api.firecrawl.dev/v2/search", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: q, limit: 8, lang: "pt", country: "br" }),
+    });
+    if (!res.ok) return [];
+    const j = (await res.json()) as {
+      data?: { web?: Array<{ url?: string }> } | Array<{ url?: string }>;
+      web?: Array<{ url?: string }>;
+    };
+    const arr = Array.isArray(j.data) ? j.data : (j.data?.web ?? j.web ?? []);
+    return arr
+      .map((r) => r.url)
+      .filter((u): u is string => Boolean(u) && /\.pdf(\?|$)/i.test(u!) && !FORBIDDEN.some((f) => u!.toLowerCase().includes(f)));
+  } catch (e) {
+    console.warn("dorkPdfAttachments error", (e as Error).message);
+    return [];
+  }
+}
+
+/**
+ * (B) Scrape de um PDF → markdown via Firecrawl, e roda extractItemsFromText.
+ * Firecrawl entrega texto extraído de PDF como markdown.
+ */
+async function scrapeAndMine(url: string, label: string): Promise<RawItem[]> {
+  const key = process.env.FIRECRAWL_API_KEY;
+  if (!key) return [];
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 25_000);
+  try {
+    const res = await fetch("https://api.firecrawl.dev/v2/scrape", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ url, formats: ["markdown", "html"], onlyMainContent: true }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return [];
+    const j = (await res.json()) as {
+      data?: { markdown?: string; html?: string };
+      markdown?: string;
+      html?: string;
+    };
+    const md = j.data?.markdown ?? j.markdown ?? "";
+    const html = j.data?.html ?? j.html ?? "";
+    const fromText = extractItemsFromText(md, url, label);
+    const fromTable = extractItemsFromHtmlTables(html, url, label);
+    // Dedup simples por (desc|valor)
+    const seen = new Set<string>();
+    const merged = [...fromTable, ...fromText].filter((it) => {
+      const k = `${(it.descricao ?? "").slice(0, 80)}|${it.valor_unitario ?? ""}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    return merged.slice(0, 60);
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * (C) Mineração de tabelas HTML: percorre <table><tr><td> e identifica
+ * colunas plausíveis de descrição/unidade/quantidade/valor unitário/valor total.
+ */
+function extractItemsFromHtmlTables(html: string, sourceUrl: string, sourceLabel: string): RawItem[] {
+  if (!html || html.length < 200) return [];
+  const items: RawItem[] = [];
+  // Tira scripts/styles para reduzir ruído
+  const stripped = html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "");
+  const tables = stripped.match(/<table[\s\S]*?<\/table>/gi) ?? [];
+  for (const table of tables) {
+    const rows = table.match(/<tr[\s\S]*?<\/tr>/gi) ?? [];
+    if (rows.length < 2) continue;
+    for (const row of rows) {
+      const cellsRaw = row.match(/<t[dh][\s\S]*?<\/t[dh]>/gi) ?? [];
+      if (cellsRaw.length < 3 || cellsRaw.length > 12) continue;
+      const cells = cellsRaw.map((c) =>
+        c.replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim(),
+      );
+      // Identifica colunas de preço (BR): contém "R$" ou padrão "X,YY"
+      const priceIdx: number[] = [];
+      cells.forEach((c, i) => {
+        if (/r\$\s*[\d.]+,\d{2}/i.test(c) || /^[\d.]+,\d{2}$/.test(c)) priceIdx.push(i);
+      });
+      if (priceIdx.length === 0) continue;
+      // Descrição = primeira célula longa com letras (não-numérica)
+      const descIdx = cells.findIndex((c) => c.length >= 10 && /[a-zà-ÿ]{4,}/i.test(c) && !/r\$/i.test(c));
+      if (descIdx < 0) continue;
+      const desc = cleanItemTitle(cells[descIdx]);
+      if (!desc || desc.length < 6 || looksLikeProcessNumberTitle(desc)) continue;
+      // Unidade = primeira célula curta que case com UNIDADES_RE
+      let un: string | undefined;
+      for (let i = 0; i < cells.length; i++) {
+        if (i === descIdx) continue;
+        if (UNIDADES_RE.test(cells[i]) && cells[i].length <= 8) { un = cells[i].toUpperCase(); break; }
+      }
+      // Quantidade = célula numérica entre desc e primeiro preço (não-monetária)
+      let qtd: number | undefined;
+      for (let i = descIdx + 1; i < priceIdx[0]; i++) {
+        if (i === descIdx) continue;
+        if (/^[\d.]+(?:,\d+)?$/.test(cells[i]) && !/,\d{2}$/.test(cells[i])) {
+          qtd = parseQtyBR(cells[i]);
+          break;
+        }
+      }
+      const valUnit = parsePriceBR(cells[priceIdx[0]].replace(/^r\$\s*/i, ""));
+      const valTotal =
+        priceIdx.length > 1 ? parsePriceBR(cells[priceIdx[priceIdx.length - 1]].replace(/^r\$\s*/i, "")) : undefined;
+      if (!valUnit && !valTotal) continue;
+      items.push({
+        id: `mined-html-${items.length}-${sourceUrl.slice(-30)}`,
+        objeto_compra: desc,
+        descricao: desc,
+        unidade_medida: un,
+        quantidade: qtd,
+        valor_unitario_homologado: valUnit,
+        valor_unitario: valUnit,
+        valor_total_item: valTotal ?? (qtd && valUnit ? qtd * valUnit : undefined),
+        tipo_documento: /ata/i.test(sourceUrl) ? "ata" : /contrato/i.test(sourceUrl) ? "contrato" : "outro",
+        url: sourceUrl,
+        _source: sourceLabel,
+        _sourceName: sourceLabel,
+        _sourceDomain: (() => { try { return new URL(sourceUrl).hostname.replace(/^www\./, ""); } catch { return undefined; } })(),
+        _valorTipo: valUnit ? "unitario_homologado" : "global",
+        situacao_nome: "Homologado",
+      });
+      if (items.length > 200) return items;
+    }
+  }
+  return items;
+}
+
+/**
+ * Orquestrador: dorking de PDFs + scrape paralelo com limite de concorrência.
+ * Time-boxed para não estourar o budget do servidor.
+ */
+async function mineAttachments(query: string, extraUrls: string[] = []): Promise<RawItem[]> {
+  if (!process.env.FIRECRAWL_API_KEY) return [];
+  const dorked = await dorkPdfAttachments(query);
+  const urls = Array.from(new Set([...dorked, ...extraUrls])).slice(0, 6);
+  if (urls.length === 0) return [];
+  const CONCURRENCY = 3;
+  const out: RawItem[] = [];
+  for (let i = 0; i < urls.length; i += CONCURRENCY) {
+    const chunk = urls.slice(i, i + CONCURRENCY);
+    const settled = await Promise.allSettled(
+      chunk.map((u) => {
+        let host = "";
+        try { host = new URL(u).hostname.replace(/^www\./, ""); } catch { /* noop */ }
+        return scrapeAndMine(u, host || "Anexo");
+      }),
+    );
+    for (const s of settled) if (s.status === "fulfilled") out.push(...s.value);
+    if (out.length > 150) break;
+  }
+  return out;
+}
+
 // Lê catálogo de fontes (price_sources) ordenado por prioridade e taxa de sucesso.
 async function loadActiveSources(): Promise<{ domain: string; name: string }[]> {
   try {
