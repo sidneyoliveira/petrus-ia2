@@ -495,7 +495,9 @@ function SourceStrip({
   sources?: { name: string; domain?: string; total: number }[];
 }) {
   const fallback = ["PNCP", "Compras.gov.br", "TCE-CE", "TCEs/portais oficiais", "Fornecedores"];
-  const list = sources?.length ? sources : fallback.map((name) => ({ name, total: 0 }));
+  const list: { name: string; domain?: string; total: number }[] = sources?.length
+    ? sources
+    : fallback.map((name) => ({ name, total: 0 }));
   return (
     <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
       <span className="inline-flex items-center gap-1 pr-1">
