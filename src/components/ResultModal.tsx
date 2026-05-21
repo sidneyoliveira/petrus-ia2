@@ -1,0 +1,128 @@
+import { X, ExternalLink, Award } from "lucide-react";
+import { useEffect } from "react";
+import type { PriceResult } from "@/lib/types";
+import { ScoreBar } from "./ScoreBar";
+
+function brl(v?: number | null) {
+  if (typeof v !== "number") return "—";
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
+}
+function fmtDate(d?: string) {
+  if (!d) return "—";
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return d.slice(0, 10);
+  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "long" }).format(dt);
+}
+
+interface Props {
+  item: PriceResult | null;
+  onClose: () => void;
+}
+
+export function ResultModal({ item, onClose }: Props) {
+  useEffect(() => {
+    if (!item) return;
+    const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", h);
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", h);
+      document.body.style.overflow = "";
+    };
+  }, [item, onClose]);
+
+  if (!item) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in" onClick={onClose}>
+      <div className="absolute inset-0 bg-foreground/40 backdrop-blur-sm" />
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full sm:max-w-3xl max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl bg-card border border-border shadow-elegant animate-in slide-in-from-bottom-4"
+      >
+        <div className="sticky top-0 z-10 glass border-b border-border/60 px-6 py-4 flex items-start justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+              <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-primary">
+                {item.origem}
+              </span>
+              {item.homologado && (
+                <span className="inline-flex items-center gap-1 rounded-md bg-gold/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gold">
+                  <Award className="h-3 w-3" /> Homologado
+                </span>
+              )}
+            </div>
+            <h2 className="text-lg sm:text-xl font-semibold leading-tight text-balance">{item.titulo}</h2>
+          </div>
+          <button onClick={onClose} aria-label="Fechar" className="inline-flex h-9 w-9 items-center justify-center rounded-md hover:bg-secondary transition-smooth">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-6">
+          <section>
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Descrição</div>
+            <p className="text-sm leading-relaxed">{item.descricao}</p>
+          </section>
+
+          <section className="grid sm:grid-cols-3 gap-4 rounded-xl border border-border bg-secondary/30 p-4">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Valor</div>
+              <div className="text-2xl font-bold tabular-nums">{brl(item.valor)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Data</div>
+              <div className="text-base font-medium">{fmtDate(item.data)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Compatibilidade</div>
+              <div className="text-2xl font-bold text-accent tabular-nums">{Math.round(item.scoreFinal * 100)}%</div>
+            </div>
+          </section>
+
+          <section className="grid sm:grid-cols-2 gap-x-6 gap-y-3">
+            <Field label="Órgão" value={item.orgao} />
+            <Field label="CNPJ" value={item.cnpj} mono />
+            <Field label="Unidade" value={item.unidade} />
+            <Field label="Modalidade" value={item.modalidade} />
+            <Field label="Situação" value={item.situacao} />
+            <Field label="Município / UF" value={[item.municipio, item.uf].filter(Boolean).join(" / ")} />
+            <Field label="Número" value={item.numero} />
+            <Field label="Ano" value={item.ano} />
+          </section>
+
+          <section>
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-3">Scores de compatibilidade</div>
+            <div className="grid sm:grid-cols-2 gap-x-6 gap-y-3">
+              <ScoreBar label="Score semântico (IA)" value={item.scoreSemantico} tone="accent" />
+              <ScoreBar label="Score textual" value={item.scoreTextual} />
+              <ScoreBar label="Score jurídico" value={item.scoreJuridico} />
+              <ScoreBar label="Score técnico" value={item.scoreTecnico} tone="success" />
+              <ScoreBar label="Score geográfico" value={item.scoreGeografico} tone="gold" />
+            </div>
+          </section>
+
+          {item.url && (
+            <a
+              href={item.url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-smooth hover:opacity-90"
+            >
+              Abrir fonte original <ExternalLink className="h-4 w-4" />
+            </a>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, value, mono }: { label: string; value?: string; mono?: boolean }) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className={`text-sm ${mono ? "font-mono" : ""}`}>{value || "—"}</div>
+    </div>
+  );
+}
