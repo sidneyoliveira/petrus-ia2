@@ -301,12 +301,15 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
   }
 
   const expanded: RawItem[] = [];
+  const parentsFallback: RawItem[] = [];
   for (const s of fetched) {
     if (s.status !== "fulfilled") continue;
     const { parent, items } = s.value;
     if (!items || items.length === 0) {
-      // Sem itens individuais — DESCARTA. O usuário pediu cotação por ITEM,
-      // não por processo. Mostrar o "objeto do contrato" inteiro confunde.
+      // Sem itens individuais — guarda como FALLBACK (processo inteiro),
+      // tagueado como "global" para o ranqueador empurrar pra baixo, mas
+      // ainda assim aparecer caso não haja itens unitários suficientes.
+      parentsFallback.push({ ...parent, _valorTipo: "global" });
       continue;
     }
     // Filtra itens cuja descrição tem ao menos 1 token da consulta
@@ -316,10 +319,10 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
       if (qTokens.length === 0) return true;
       return qTokens.some((t) => d.includes(t));
     });
-    // Se nenhum item bater com a query, descarta — esse processo não tem
-    // o item buscado (era só objeto correlato).
-    if (relevant.length === 0) continue;
-    const useItems = relevant;
+    // Se nenhum item bater com a query, NÃO descarta: pega os itens com
+    // valor unitário mesmo assim (podem ser variantes/sinônimos) e marca
+    // como fallback de menor prioridade.
+    const useItems = relevant.length > 0 ? relevant : items;
     for (const it of useItems) {
       const unit = it.valorUnitarioHomologado ?? it.valorUnitarioEstimado;
       const tipoVal: PriceResult["valorTipo"] = it.valorUnitarioHomologado
@@ -327,8 +330,9 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
         : it.valorUnitarioEstimado
           ? "unitario_estimado"
           : "desconhecido";
-      // Sem valor unitário extraível também não serve como cotação
-      if (typeof unit !== "number" || unit <= 0) continue;
+      // Sem valor unitário extraível: mantém só se descrição é específica
+      // (o cliente ainda pode usar como evidência manual).
+      if ((typeof unit !== "number" || unit <= 0) && !it.descricao) continue;
       expanded.push({
         ...parent,
         id: `${parent.id ?? `${parent.orgao_cnpj}-${parent.ano}-${parent.numero}`}-it${it.numeroItem ?? Math.random().toString(36).slice(2, 6)}`,
@@ -336,7 +340,7 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
         descricao: it.descricao ?? parent.descricao,
         valor_unitario_homologado: it.valorUnitarioHomologado,
         valor_unitario_estimado: it.valorUnitarioEstimado,
-        valor_unitario: unit,
+        valor_unitario: typeof unit === "number" ? unit : undefined,
         unidade_medida: it.unidadeMedida ?? parent.unidade_medida,
         quantidade: it.quantidade,
         situacao: it.situacaoCompraItemNome ?? parent.situacao,
@@ -345,23 +349,21 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
     }
   }
 
-  // Passthrough (Firecrawl/outros): só mantém se já tiver valor unitário.
-  // Sem unitário, não é cotação por item — descarta.
-  const kept = passthrough.filter((r) => {
-    const hasUnit =
-      typeof r.valor_unitario_homologado === "number" ||
-      typeof r.valor_unitario_estimado === "number" ||
-      typeof r.valor_unitario === "number";
-    return hasUnit;
-  }).map((r) => ({
+  // Passthrough (Firecrawl/web): SEMPRE mantém. Resultado web é evidência
+  // qualitativa — o usuário pode abrir a fonte e validar o preço manualmente.
+  // O ranqueador vai empurrar resultados sem unitário pra baixo.
+  const kept = passthrough.map((r) => ({
     ...r,
-    _valorTipo: (r._valorTipo ??
-      (typeof r.valor_unitario_homologado === "number"
-        ? "unitario_homologado"
-        : "unitario_estimado")) as PriceResult["valorTipo"],
+    _valorTipo:
+      (r._valorTipo ??
+        (typeof r.valor_unitario_homologado === "number"
+          ? "unitario_homologado"
+          : typeof r.valor_unitario_estimado === "number" || typeof r.valor_unitario === "number"
+            ? "unitario_estimado"
+            : "desconhecido")) as PriceResult["valorTipo"],
   }));
 
-  return [...expanded, ...kept];
+  return [...expanded, ...parentsFallback, ...kept];
 }
 
 // Compras.gov.br — endpoint público de contratos (Dados Abertos)
@@ -722,39 +724,31 @@ export const searchPrices = createServerFn({ method: "POST" })
 
     let results = raw.map(toResult);
 
-    // Descarta resultados cujo título E descrição parecem corpo de PDF
-    // (preâmbulos, cláusulas, etc.) — sem ter como extrair item específico.
-    results = results.filter(
-      (r) => !(looksLikeRawDocumentText(r.titulo) && looksLikeRawDocumentText(r.descricao)),
-    );
-
-    // Descarta resultados onde título/descrição é DESCRIÇÃO DE PROCESSO
-    // (ex.: "O objeto do presente contrato é a compra de impressora...") e o
-    // valor não é unitário — esses são processos, não cotações de item.
-    results = results.filter((r) => {
-      const isProcessText =
-        looksLikeProcessObject(r.titulo) || looksLikeProcessObject(r.descricao);
-      if (!isProcessText) return true;
-      return r.valorTipo === "unitario_homologado" || r.valorTipo === "unitario_estimado";
-    });
-
-    // Descarta resultados com valor claramente do processo todo quando exceder
-    // um teto razoável para um único item (heurística: > R$ 500.000 sem unidade).
-    results = results.filter((r) => {
-      // Hoje só aceitamos valor UNITÁRIO. Global vira ruído — descarta.
-      if (r.valorTipo === "global") return false;
-      if (r.valorTipo === "desconhecido" && typeof r.valor !== "number") return false;
-      return true;
-    });
+    // Anota cada resultado com flags de qualidade. NADA é descartado aqui —
+    // os flags viram penalidades no score final. Garantia: nunca retornar
+    // zero por causa de filtros rígidos.
+    const flags = new Map<string, {
+      rawDoc: boolean;
+      processObj: boolean;
+      multiItem: boolean;
+      noPrice: boolean;
+      globalPrice: boolean;
+    }>();
+    for (const r of results) {
+      flags.set(r.id, {
+        rawDoc: looksLikeRawDocumentText(r.titulo) && looksLikeRawDocumentText(r.descricao),
+        processObj: looksLikeProcessObject(r.titulo) || looksLikeProcessObject(r.descricao),
+        multiItem: looksLikeMultiItem(`${r.titulo} ${r.descricao}`),
+        noPrice: typeof r.valor !== "number",
+        globalPrice: r.valorTipo === "global",
+      });
+    }
 
     // Auto-descoberta: registra novos domínios encontrados pelo Firecrawl
     void registerDiscoveredDomains(
       results.map((r) => r.url ?? "").filter(Boolean),
       knownDomains,
     );
-
-    // Filtra resultados que misturam vários itens distintos no mesmo registro
-    results = results.filter((r) => !looksLikeMultiItem(`${r.titulo} ${r.descricao}`));
 
     // Filtro por palavras-chave obrigatórias
     if (data.keywords && data.keywords.length > 0) {
@@ -792,13 +786,34 @@ export const searchPrices = createServerFn({ method: "POST" })
       return !FORBIDDEN.some((f) => blob.includes(f));
     });
 
-    // Filtros básicos
-    if (data.uf) results = results.filter((r) => (r.uf ?? "").toUpperCase() === data.uf!.toUpperCase());
-    if (data.modalidade) results = results.filter((r) => (r.modalidade ?? "").toLowerCase().includes(data.modalidade!.toLowerCase()));
-    if (data.unidade) results = results.filter((r) => (r.unidade ?? "").toLowerCase().includes(data.unidade!.toLowerCase()));
-    if (data.apenasHomologados) results = results.filter((r) => r.homologado);
-    if (typeof data.valorMin === "number") results = results.filter((r) => (r.valor ?? 0) >= data.valorMin!);
-    if (typeof data.valorMax === "number") results = results.filter((r) => (r.valor ?? Infinity) <= data.valorMax!);
+    // Filtros básicos (UF/modalidade/unidade/homologação/preço):
+    // aplicados como SINAIS DE RANQUEAMENTO, não como exclusões duras.
+    // Cada falha vira uma penalidade no score final, mas o item permanece
+    // visível como fallback (o usuário ainda decide).
+    const softPenalty = new Map<string, number>();
+    const addPen = (id: string, p: number) =>
+      softPenalty.set(id, (softPenalty.get(id) ?? 0) + p);
+    if (data.uf) {
+      const uf = data.uf.toUpperCase();
+      for (const r of results) if ((r.uf ?? "").toUpperCase() !== uf) addPen(r.id, 0.15);
+    }
+    if (data.modalidade) {
+      const md = data.modalidade.toLowerCase();
+      for (const r of results) if (!(r.modalidade ?? "").toLowerCase().includes(md)) addPen(r.id, 0.1);
+    }
+    if (data.unidade) {
+      const un = data.unidade.toLowerCase();
+      for (const r of results) if (!(r.unidade ?? "").toLowerCase().includes(un)) addPen(r.id, 0.1);
+    }
+    if (data.apenasHomologados) {
+      for (const r of results) if (!r.homologado) addPen(r.id, 0.2);
+    }
+    if (typeof data.valorMin === "number") {
+      for (const r of results) if ((r.valor ?? 0) < data.valorMin) addPen(r.id, 0.15);
+    }
+    if (typeof data.valorMax === "number") {
+      for (const r of results) if ((r.valor ?? Infinity) > data.valorMax) addPen(r.id, 0.15);
+    }
 
     // Score textual (Jaccard)
     const qTokens = tokenize(data.query);
@@ -830,12 +845,20 @@ export const searchPrices = createServerFn({ method: "POST" })
 
     // Score final ponderado
     results = results.map((r) => {
-      const final =
+      const f = flags.get(r.id);
+      let penalty = softPenalty.get(r.id) ?? 0;
+      if (f?.rawDoc) penalty += 0.25;
+      if (f?.processObj) penalty += 0.15;
+      if (f?.multiItem) penalty += 0.2;
+      if (f?.globalPrice) penalty += 0.2;
+      if (f?.noPrice) penalty += 0.15;
+      const base =
         0.35 * r.scoreSemantico +
         0.2 * r.scoreTextual +
         0.25 * r.scoreJuridico +
         0.1 * r.scoreGeografico +
         0.1 * r.scoreTecnico;
+      const final = Math.max(0, base - penalty);
       return { ...r, scoreFinal: Math.round(final * 1000) / 1000 };
     });
 
