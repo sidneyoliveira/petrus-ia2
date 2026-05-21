@@ -1647,6 +1647,33 @@ export const searchPrices = createServerFn({ method: "POST" })
     const pagina = data.pagina ?? 1;
     const ultimosMeses = data.ultimosMeses ?? 12;
 
+    // 0) CACHE — chave determinística por (query_norm, filters_hash).
+    //    Se cliente NÃO pediu forceRefresh e existe registro no banco,
+    //    devolve imediatamente. O frontend dispara o refresh em background.
+    const query_norm = normalizeQueryNorm(data.query);
+    const fHash = filtersHash(data);
+    if (!data.forceRefresh) {
+      const cached = await readCachedSearch(query_norm, fHash);
+      if (cached && cached.results.length > 0) {
+        const fresh = new Date(cached.search.fresh_until).getTime() > Date.now();
+        console.info(
+          `[cache] HIT q="${data.query.slice(0, 60)}" items=${cached.results.length} fresh=${fresh}`,
+        );
+        return {
+          results: cached.results,
+          total: cached.results.length,
+          pagina,
+          pageSize: 20,
+          query: data.query,
+          tookMs: Date.now() - t0,
+          sources: cached.search.sources ?? [],
+          fromCache: true,
+          cachedAt: cached.search.computed_at,
+          stale: !fresh,
+        };
+      }
+    }
+
     // 1) Expansão inteligente da consulta (sinônimos via IA)
     const mode = data.mode ?? "semantic";
     const variants =
