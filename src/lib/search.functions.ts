@@ -1054,6 +1054,11 @@ export const searchPrices = createServerFn({ method: "POST" })
       return !FORBIDDEN.some((f) => blob.includes(f));
     });
 
+    // Regra central: se há itens granulares disponíveis, remove cards que ainda
+    // representam processo/edital/ata. A lista final deve mostrar itens cotáveis.
+    const granular = results.filter(isGranularItemResult);
+    if (granular.length > 0) results = granular;
+
     // Filtros básicos (UF/modalidade/unidade/homologação/preço):
     // aplicados como SINAIS DE RANQUEAMENTO, não como exclusões duras.
     // Cada falha vira uma penalidade no score final, mas o item permanece
@@ -1167,5 +1172,6 @@ export const searchPrices = createServerFn({ method: "POST" })
       pageSize: 20,
       query: data.query,
       tookMs: Date.now() - t0,
+      sources: summarizeSources(results, catalog),
     };
   });
