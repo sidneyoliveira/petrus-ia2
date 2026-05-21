@@ -1371,6 +1371,9 @@ export const searchPrices = createServerFn({ method: "POST" })
       // Cotação com fornecedores reais (catálogos / fabricantes / distribuidores)
       tasks.push(fetchFirecrawlSuppliers(v));
     }
+    // Mineração de anexos (PDFs/HTML de Atas e Termos de Homologação)
+    // Roda só na variante principal para limitar custo do Firecrawl.
+    tasks.push(mineAttachments(data.query));
     const settled = await Promise.allSettled(tasks);
     let raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
 
