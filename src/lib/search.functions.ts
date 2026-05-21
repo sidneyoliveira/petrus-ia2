@@ -8,6 +8,7 @@ import { logSourceRunsBatch, type SourceRunInput } from "./telemetry";
 import { enrichCnpjsBackground } from "./enrich/cnpj";
 import { healValuesBackground } from "./heal/value-healer.server";
 import { embedQuoteItemsBackground } from "./embed/embedder.server";
+import { classifyTriad } from "./extract/triad";
 
 const asJson = <T,>(v: T): Json => v as unknown as Json;
 
@@ -117,16 +118,32 @@ async function writeCachedSearch(opts: {
       return;
     }
     await supabaseAdmin.from("quote_items").delete().eq("search_id", search.id);
-    const rows = opts.results.slice(0, 500).map((r) => ({
+    const rows = opts.results.slice(0, 500).map((r) => {
+      const triad = classifyTriad({
+        quantidade: r.quantidade ?? null,
+        valor: r.valor ?? null,
+        valor_total: r.valorTotal ?? null,
+      });
+      // Espelha de volta no payload pra UI ler sem nova query
+      r.mathStatus = triad.math_status;
+      r.extractionQuality = triad.extraction_quality;
+      r.valorTotalCalculado = triad.valor_total_calculado;
+      r.mathDeltaPct = triad.math_delta_pct;
+      return {
       fingerprint: `${opts.query_norm}|${r.id}`.slice(0, 240),
       search_id: search.id,
       query_norm: opts.query_norm,
       titulo: (r.titulo || "").slice(0, 500),
+      objeto_estruturado: (r.objetoEstruturado || r.titulo || "").slice(0, 240),
       descricao: (r.descricao || "").slice(0, 3000),
       unidade: r.unidade ?? null,
       quantidade: r.quantidade ?? null,
       valor: r.valor ?? null,
       valor_total: r.valorTotal ?? null,
+      valor_total_calculado: triad.valor_total_calculado,
+      math_status: triad.math_status,
+      math_delta_pct: triad.math_delta_pct,
+      extraction_quality: triad.extraction_quality,
       valor_tipo: r.valorTipo ?? null,
       fornecedor: r.fornecedor ?? null,
       cnpj: r.cnpj ?? null,
@@ -149,7 +166,8 @@ async function writeCachedSearch(opts: {
         ano: r.ano ?? null,
       }),
       source_excerpt: (r.descricao ?? "").slice(0, 1000),
-    }));
+      };
+    });
     for (let i = 0; i < rows.length; i += 200) {
       const chunk = rows.slice(i, i + 200);
       const { error: e2 } = await supabaseAdmin
