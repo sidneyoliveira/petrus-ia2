@@ -527,11 +527,18 @@ function buildPncpUrl(raw: RawItem): string | undefined {
 
 function toResult(raw: RawItem): PriceResult {
   // Título do ITEM (objeto da contratação) tem prioridade sobre o nome do processo.
-  const objeto = (raw.objeto_compra || raw.descricao || raw.description || "").toString().trim();
-  const processo = (raw.title || "").toString().trim();
-  const titulo = objeto || processo || "Sem título";
-  const subtitulo = objeto && processo && objeto !== processo ? processo : undefined;
-  const descricao = raw.description || raw.descricao || raw.objeto_compra || titulo;
+  const objetoRaw = (raw.objeto_compra || raw.descricao || raw.description || "").toString().trim();
+  const processoRaw = (raw.title || "").toString().trim();
+  const objeto = cleanItemTitle(objetoRaw);
+  const processo = cleanItemTitle(processoRaw);
+  // Prefere o mais curto e específico — descrições longas são quase sempre
+  // blocos de texto extraídos de PDFs (preâmbulo + cláusulas).
+  const candidates = [objeto, processo].filter((s) => s && s !== "Sem título");
+  candidates.sort((a, b) => a.length - b.length);
+  const titulo = candidates[0] || "Sem título";
+  const subtitulo =
+    candidates.length > 1 && candidates[1] !== titulo ? candidates[1] : undefined;
+  const descricao = objetoRaw || processoRaw || titulo;
   // Prioriza valor UNITÁRIO/HOMOLOGADO do item sobre valor total do processo
   const valor =
     typeof raw.valor_unitario_homologado === "number"
