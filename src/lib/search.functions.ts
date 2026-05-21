@@ -803,6 +803,8 @@ export const searchPrices = createServerFn({ method: "POST" })
       tasks.push(fetchFirecrawlWeb(v, siteFilters));
       if (tceDomains.length > 0) tasks.push(fetchFirecrawlWeb(v, tceDomains));
       if (govFederal.length > 0) tasks.push(fetchFirecrawlWeb(v, govFederal));
+      // Cotação com fornecedores reais (catálogos / fabricantes / distribuidores)
+      tasks.push(fetchFirecrawlSuppliers(v));
     }
     const settled = await Promise.allSettled(tasks);
     let raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
