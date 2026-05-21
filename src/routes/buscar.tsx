@@ -435,7 +435,7 @@ function Buscar() {
                 </label>
 
                 <button
-                  onClick={() => setFilters({ uf: "", modalidade: "", unidade: "", apenasHomologados: false, onlyValor: false, minScore: 0, valorMin: "", valorMax: "" })}
+                  onClick={() => setFilters({ uf: "", modalidade: "", unidade: "", apenasHomologados: false, onlyValor: false, minScore: 0, valorMin: "", valorMax: "", hideLixo: true, onlyMathOk: false })}
                   className="w-full mt-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-secondary transition-smooth"
                 >
                   Limpar filtros
