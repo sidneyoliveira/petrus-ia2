@@ -72,14 +72,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "CotaçãoIA · Pesquisa de preços inteligente para licitações" },
+      { title: "PetrusIA · Pesquisa de preços inteligente para licitações" },
       { name: "description", content: "Motor inteligente de pesquisa de preços públicos em conformidade com a Lei 14.133/2021, com busca semântica em PNCP, atas, contratos e empenhos homologados." },
       { name: "author", content: "CotaçãoIA" },
-      { property: "og:title", content: "CotaçãoIA · Pesquisa de preços para licitações 14.133" },
-      { property: "og:description", content: "Busca semântica com IA em fontes oficiais: PNCP, Compras.gov.br, Portais da Transparência, atas e contratos homologados." },
+      { property: "og:title", content: "PetrusIA · Pesquisa de preços inteligente para licitações" },
+      { property: "og:description", content: "Motor inteligente de pesquisa de preços públicos em conformidade com a Lei 14.133/2021, com busca semântica em PNCP, atas, contratos e empenhos homologados." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "PetrusIA · Pesquisa de preços inteligente para licitações" },
+      { name: "twitter:description", content: "Motor inteligente de pesquisa de preços públicos em conformidade com a Lei 14.133/2021, com busca semântica em PNCP, atas, contratos e empenhos homologados." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/ad50622d-95f5-483e-8dbb-cf68ed140a1b/id-preview-cb7e56a3--cccd2b45-ba2d-4a0f-8798-644bb98d306b.lovable.app-1779370740057.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/ad50622d-95f5-483e-8dbb-cf68ed140a1b/id-preview-cb7e56a3--cccd2b45-ba2d-4a0f-8798-644bb98d306b.lovable.app-1779370740057.png" },
     ],
     links: [
       {
