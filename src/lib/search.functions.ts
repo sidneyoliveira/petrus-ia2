@@ -4,7 +4,7 @@ import type { PriceResult, SearchResponse } from "./types";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 const FilterSchema = z.object({
-  query: z.string().min(2).max(200),
+  query: z.string().trim().min(1).max(200),
   uf: z.string().optional(),
   modalidade: z.string().optional(),
   unidade: z.string().optional(),
