@@ -3,10 +3,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { Search, Loader2, Sparkles, Download, FileText, FileJson, FileSpreadsheet, SlidersHorizontal, AlertCircle, Database, RefreshCw } from "lucide-react";
+import { Search, Loader2, Sparkles, Download, FileText, FileJson, FileSpreadsheet, SlidersHorizontal, AlertCircle, Database, RefreshCw, LayoutGrid, Rows3 } from "lucide-react";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import { ResultCard } from "@/components/ResultCard";
+import { ResultsTable } from "@/components/ResultsTable";
 import { ResultModal } from "@/components/ResultModal";
 import { searchPrices } from "@/lib/search.functions";
 import { exportCSV, exportJSON, exportTXT } from "@/lib/export";
@@ -50,12 +51,15 @@ function Buscar() {
     minScore: 0,
     valorMin: "" as string,
     valorMax: "" as string,
+    hideLixo: true,
+    onlyMathOk: false,
   });
   const [sortBy, setSortBy] = useState<
     "compat" | "semantico" | "juridico" | "valorAsc" | "valorDesc" | "valorMedio" | "dataRecente"
   >("compat");
   const [opened, setOpened] = useState<PriceResult | null>(null);
   const [saved, setSaved] = useState<Set<string>>(new Set());
+  const [view, setView] = useState<"table" | "cards">("table");
   const [visible, setVisible] = useState(12);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
@@ -145,6 +149,8 @@ function Buscar() {
       if (vMin !== null && !Number.isNaN(vMin) && (r.valor ?? -Infinity) < vMin) return false;
       if (vMax !== null && !Number.isNaN(vMax) && (r.valor ?? Infinity) > vMax) return false;
       if (r.scoreFinal * 100 < filters.minScore) return false;
+      if (filters.hideLixo && r.extractionQuality === "lixo") return false;
+      if (filters.onlyMathOk && !(r.mathStatus === "ok" && r.extractionQuality === "tríade_ok")) return false;
       return true;
     });
 
