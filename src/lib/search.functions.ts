@@ -140,6 +140,13 @@ async function writeCachedSearch(opts: {
       documento: r.documento ?? null,
       score_final: r.scoreFinal ?? null,
       payload: asJson(r),
+      source_payload_raw: asJson({
+        url: r.url ?? null,
+        origem: r.origem ?? null,
+        numero: r.numero ?? null,
+        ano: r.ano ?? null,
+      }),
+      source_excerpt: (r.descricao ?? "").slice(0, 1000),
     }));
     for (let i = 0; i < rows.length; i += 200) {
       const chunk = rows.slice(i, i + 200);
