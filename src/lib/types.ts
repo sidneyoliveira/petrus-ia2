@@ -64,4 +64,10 @@ export interface SearchResponse {
   query: string;
   tookMs: number;
   sources?: SearchSourceStatus[];
+  /** True quando o resultado veio do cache em vez da varredura ao vivo. */
+  fromCache?: boolean;
+  /** ISO timestamp de quando o cache foi gerado. */
+  cachedAt?: string;
+  /** True quando o cache existe mas já está fora da janela de frescor. */
+  stale?: boolean;
 }
