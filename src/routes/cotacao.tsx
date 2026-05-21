@@ -1,9 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo } from "react";
-import { Trash2, Download, ShoppingBasket, ExternalLink, FileSpreadsheet } from "lucide-react";
+import { Trash2, ShoppingBasket, ExternalLink, FileSpreadsheet, FileText } from "lucide-react";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import { useBasket } from "@/lib/basket";
+import { exportCotacaoPdf } from "@/lib/export-pdf";
 
 export const Route = createFileRoute("/cotacao")({
   component: CotacaoPage,
@@ -92,6 +93,28 @@ function CotacaoPage() {
     URL.revokeObjectURL(url);
   };
 
+  const exportPDF = () => {
+    exportCotacaoPdf({
+      rows: totals.rows.map((r) => ({
+        titulo: r.item.objetoEstruturado || r.item.titulo,
+        unidade: r.item.unidade ?? null,
+        quantidade: r.quantidade,
+        unitario: r.unit,
+        subtotal: r.subtotal,
+        fornecedor: r.item.fornecedor ?? null,
+        cnpj: r.item.cnpj ?? null,
+        orgao: r.item.orgao ?? null,
+        uf: r.item.uf ?? null,
+        data: r.item.data ?? null,
+        origem: r.item.origem,
+        url: r.item.url ?? null,
+      })),
+      totalGeral: totals.totalGeral,
+      media: totals.media,
+      mediana: totals.mediana,
+    });
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <SiteHeader />
@@ -110,6 +133,12 @@ function CotacaoPage() {
               </div>
               {items.length > 0 && (
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={exportPDF}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground hover:opacity-90 transition-smooth"
+                  >
+                    <FileText className="h-3.5 w-3.5" /> Nota Técnica (PDF)
+                  </button>
                   <button
                     onClick={exportCotacaoCSV}
                     className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 transition-smooth"
