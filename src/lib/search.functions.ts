@@ -4,6 +4,8 @@ import type { PriceResult, SearchResponse, SearchSourceStatus } from "./types";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Json } from "@/integrations/supabase/types";
 import { safeUnitValue } from "./pncp-rules";
+import { logSourceRunsBatch, type SourceRunInput } from "./telemetry";
+import { enrichCnpjsBackground } from "./enrich/cnpj";
 
 const asJson = <T,>(v: T): Json => v as unknown as Json;
 
