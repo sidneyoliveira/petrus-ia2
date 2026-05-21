@@ -72,6 +72,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
+      { name: "google-site-verification", content: "0XXHswNKwtXYSQpEti542PtyxMCy-iun05RhQhRnub4" },
       { title: "CotaçãoIA · Pesquisa inteligente de preços públicos" },
       { name: "description", content: "Pesquisa semântica de preços em PNCP, atas e contratos, alinhada à Lei 14.133/2021." },
       { name: "author", content: "CotaçãoIA" },
