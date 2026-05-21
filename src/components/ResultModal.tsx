@@ -259,3 +259,117 @@ function Field({ label, value, mono }: { label: string; value?: string; mono?: b
     </div>
   );
 }
+
+function brl2(v: number | null) {
+  if (typeof v !== "number") return "—";
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
+}
+function num2(v: number | null) {
+  if (typeof v !== "number") return "—";
+  return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 3 }).format(v);
+}
+
+function ItemsExtractedPanel({
+  loading,
+  error,
+  data,
+}: {
+  loading: boolean;
+  error: string | null;
+  data: ExtractResponse | null;
+}) {
+  return (
+    <section className="rounded-xl border border-accent/30 bg-accent/5 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[11px] uppercase tracking-wider font-semibold text-accent flex items-center gap-1.5">
+          <Sparkles className="h-3.5 w-3.5" /> Itens extraídos pela IA
+        </div>
+        {data && (
+          <div className="text-[11px] text-muted-foreground tabular-nums">
+            {data.itens_extraidos.length} itens
+            {data.paginas ? ` · ${data.paginas} págs` : ""}
+            {data.truncated ? " · texto truncado" : ""}
+          </div>
+        )}
+      </div>
+
+      {loading && (
+        <div className="text-sm text-muted-foreground flex items-center gap-2 py-3">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Baixando PDF, lendo tabelas e extraindo itens reais com IA…
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="text-sm text-destructive">{error}</div>
+      )}
+
+      {data && !loading && (
+        <>
+          {data.metadata_processo.objeto_geral && (
+            <div className="text-[11px] text-muted-foreground mb-2">
+              <span className="uppercase tracking-wider">Objeto do processo:</span>{" "}
+              <span className="text-foreground/80">{data.metadata_processo.objeto_geral}</span>
+            </div>
+          )}
+
+          {data.itens_extraidos.length === 0 ? (
+            <div className="text-sm text-muted-foreground py-2">
+              Nenhum item granular identificado.{" "}
+              {data.relatorio_confiabilidade.avisos || "O documento pode conter apenas o objeto do processo."}
+            </div>
+          ) : (
+            <div className="max-h-80 overflow-auto rounded-lg border border-border bg-card">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-secondary/80 backdrop-blur text-[10px] uppercase tracking-wider text-muted-foreground">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left w-8">#</th>
+                    <th className="px-2 py-1.5 text-left">Descrição</th>
+                    <th className="px-2 py-1.5 text-left w-14">Un.</th>
+                    <th className="px-2 py-1.5 text-right w-20">Qtd</th>
+                    <th className="px-2 py-1.5 text-right w-24">V. Unit.</th>
+                    <th className="px-2 py-1.5 text-right w-24">V. Total</th>
+                    <th className="px-2 py-1.5 text-center w-10">✓</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.itens_extraidos.map((it, idx) => (
+                    <tr key={idx} className="border-t border-border hover:bg-secondary/30">
+                      <td className="px-2 py-1.5 text-muted-foreground tabular-nums">{it.numero_item ?? idx + 1}</td>
+                      <td className="px-2 py-1.5">
+                        <div className="line-clamp-2" title={it.descricao_limpa}>{it.descricao_limpa}</div>
+                        {it.marca_modelo && (
+                          <div className="text-[10px] text-muted-foreground">Marca: {it.marca_modelo}</div>
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5 uppercase">{it.unidade ?? "—"}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{num2(it.quantidade)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums font-semibold">{brl2(it.valor_unitario)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{brl2(it.valor_total)}</td>
+                      <td className="px-2 py-1.5 text-center">
+                        {it.validacao_matematica === "ok" ? (
+                          <CheckCircle2 className="inline h-3.5 w-3.5 text-emerald-600" aria-label="Matemática OK" />
+                        ) : it.validacao_matematica === "divergente" ? (
+                          <AlertTriangle className="inline h-3.5 w-3.5 text-amber-500" aria-label="Divergente" />
+                        ) : (
+                          <MinusCircle className="inline h-3.5 w-3.5 text-muted-foreground" aria-label="Sem validação" />
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {data.relatorio_confiabilidade.avisos && data.itens_extraidos.length > 0 && (
+            <div className="mt-2 text-[11px] text-muted-foreground flex items-start gap-1.5">
+              <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0 text-amber-500" />
+              <span>{data.relatorio_confiabilidade.avisos}</span>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
