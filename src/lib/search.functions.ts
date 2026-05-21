@@ -201,8 +201,10 @@ interface RawItem {
   valor_unitario_homologado?: number;
   valor_homologado?: number;
   valor_unitario?: number;
+  valor_total_item?: number;
   unidade_medida?: string;
   quantidade?: number;
+  fornecedor?: string;
   orgao_nome?: string;
   orgao_cnpj?: string;
   unidade_nome?: string;
@@ -218,7 +220,20 @@ interface RawItem {
   url?: string;
   /** Marca explicitamente o tipo do valor (preenchido pelo enrichWithPNCPItems). */
   _valorTipo?: PriceResult["valorTipo"];
+  _supplier?: boolean;
   [k: string]: unknown;
+}
+
+function parsePncpPublicUrl(url?: string): { cnpj: string; ano: string; sequencial: string; tipo?: string } | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    const m = u.pathname.match(/\/app\/(editais|compras|atas|contratos)\/(\d{14})\/(\d{4})\/(\d+)/i);
+    if (!m) return null;
+    return { tipo: m[1], cnpj: m[2], ano: m[3], sequencial: String(Number(m[4])) };
+  } catch {
+    return null;
+  }
 }
 
 async function fetchPNCP(query: string, pagina: number, tamanho = 50): Promise<RawItem[]> {
@@ -260,20 +275,27 @@ async function fetchPncpItens(
   cnpj: string,
   ano: string | number,
   sequencial: string | number,
-  tipo: string,
+  _tipo: string,
 ): Promise<PncpItemRaw[]> {
-  // tipo: "edital"/"compra" -> /compras/, "ata" -> /atas/, "contrato" -> /contratos/
-  const seg = /ata/i.test(tipo) ? "atas" : /contrato/i.test(tipo) ? "contratos" : "compras";
-  const url = `https://pncp.gov.br/api/consulta/v1/orgaos/${cnpj}/${seg}/${ano}/${sequencial}/itens?pagina=1&tamanhoPagina=50`;
+  // Os itens granulares ficam na API pública do PNCP em /pncp-api/v1/.../compras/.../itens.
+  // A rota antiga /api/consulta/v1 não responde de forma confiável e fazia o sistema manter
+  // o processo inteiro como fallback, exatamente o comportamento incorreto reportado.
+  const seq = String(Number(String(sequencial).replace(/\D/g, "")) || sequencial);
+  const url = `https://pncp.gov.br/pncp-api/v1/orgaos/${cnpj}/compras/${ano}/${seq}/itens?pagina=1&tamanhoPagina=50`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12_000);
   try {
     const res = await fetch(url, {
       headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+      signal: ctrl.signal,
     });
     if (!res.ok) return [];
     const j = (await res.json()) as PncpItemRaw[] | { data?: PncpItemRaw[] };
     return Array.isArray(j) ? j : (j.data ?? []);
   } catch {
     return [];
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -290,12 +312,13 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
   const enrichable: RawItem[] = [];
   const passthrough: RawItem[] = [];
   for (const r of raw) {
-    const cnpj = (r.orgao_cnpj ?? "").replace(/\D/g, "");
-    const ano = r.ano;
-    const seq = r.numero ? String(r.numero).replace(/\D/g, "") : "";
+    const parsed = parsePncpPublicUrl((r.item_url as string | undefined) || (r.url as string | undefined));
+    const cnpj = (r.orgao_cnpj ?? parsed?.cnpj ?? "").replace(/\D/g, "");
+    const ano = r.ano ?? parsed?.ano;
+    const seq = r.numero ? String(r.numero).replace(/\D/g, "") : (parsed?.sequencial ?? "");
     const isPNCP = !r._source || r._source === "PNCP" || r._source === "Transparência" || r._source === "Compras.gov.br";
-    if (isPNCP && cnpj.length === 14 && ano && seq && enrichable.length < limit) {
-      enrichable.push(r);
+    if ((isPNCP || parsed) && cnpj.length === 14 && ano && seq && enrichable.length < limit) {
+      enrichable.push({ ...r, orgao_cnpj: cnpj, ano, numero: seq, tipo_documento: r.tipo_documento ?? parsed?.tipo });
     } else {
       passthrough.push(r);
     }
@@ -325,10 +348,9 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
     if (s.status !== "fulfilled") continue;
     const { parent, items } = s.value;
     if (!items || items.length === 0) {
-      // Sem itens individuais — guarda como FALLBACK (processo inteiro),
-      // tagueado como "global" para o ranqueador empurrar pra baixo, mas
-      // ainda assim aparecer caso não haja itens unitários suficientes.
-      parentsFallback.push({ ...parent, _valorTipo: "global" });
+      // Resultado oficial do PNCP sem itens individuais não deve virar card:
+      // o usuário pediu lista de ITENS, não lista de processos/atas/editais.
+      if (parent._source === "Outro" || parent._supplier) parentsFallback.push(parent);
       continue;
     }
     // Filtra itens cuja descrição tem ao menos 1 token da consulta
@@ -360,6 +382,7 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
         valor_unitario_homologado: it.valorUnitarioHomologado,
         valor_unitario_estimado: it.valorUnitarioEstimado,
         valor_unitario: typeof unit === "number" ? unit : undefined,
+        valor_total_item: it.valorTotalHomologado ?? it.valorTotal,
         unidade_medida: it.unidadeMedida ?? parent.unidade_medida,
         quantidade: it.quantidade,
         situacao: it.situacaoCompraItemNome ?? parent.situacao,
@@ -718,13 +741,17 @@ function toResult(raw: RawItem): PriceResult {
     quantidade: typeof raw.quantidade === "number" ? raw.quantidade : null,
     valor,
     valorTotal:
-      typeof raw.valor_global === "number"
-        ? raw.valor_global
-        : typeof raw.valorTotalEstimado === "number"
-          ? raw.valorTotalEstimado
-          : valor,
+      typeof raw.valor_total_item === "number"
+        ? raw.valor_total_item
+        : typeof raw.valor_global === "number"
+          ? raw.valor_global
+          : typeof raw.valorTotalEstimado === "number"
+            ? raw.valorTotalEstimado
+            : typeof raw.quantidade === "number" && typeof valor === "number"
+              ? raw.quantidade * valor
+              : valor,
     valorTipo,
-    fornecedor: undefined,
+    fornecedor: raw.fornecedor ?? (raw._supplier ? raw.orgao_nome : undefined),
     orgao: raw.orgao_nome,
     cnpj: raw.orgao_cnpj,
     municipio: raw.municipio_nome,
@@ -800,6 +827,9 @@ export const searchPrices = createServerFn({ method: "POST" })
       .filter((s) => /(^|\.)gov\.br$/.test(s.domain) && !s.domain.startsWith("tce."))
       .map((s) => s.domain);
     for (const v of variants.slice(0, 3)) {
+      // PNCP público via web: encontra páginas de processos e, em seguida,
+      // o enrich transforma essas páginas em ITENS granulares via /itens.
+      tasks.push(fetchFirecrawlWeb(v, ["pncp.gov.br"]));
       tasks.push(fetchFirecrawlWeb(v, siteFilters));
       if (tceDomains.length > 0) tasks.push(fetchFirecrawlWeb(v, tceDomains));
       if (govFederal.length > 0) tasks.push(fetchFirecrawlWeb(v, govFederal));
@@ -876,7 +906,9 @@ export const searchPrices = createServerFn({ method: "POST" })
     // Deduplicação cruzada por URL/título
     const seen = new Set<string>();
     results = results.filter((r) => {
-      const k = (r.url || `${r.origem}|${r.titulo}`).toLowerCase();
+      // Itens diferentes podem pertencer à mesma URL/processo; deduplicar só por URL
+      // apagava os itens 2, 3, 4... e voltava a parecer uma lista de processos.
+      const k = `${r.url || r.origem}|${r.titulo}|${r.valor ?? ""}|${r.quantidade ?? ""}`.toLowerCase();
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
