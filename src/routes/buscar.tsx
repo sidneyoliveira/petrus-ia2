@@ -510,7 +510,6 @@ function Buscar() {
                     <Stat label="Máximo" value={brl(stats.max)} />
                   </div>
                 )}
-                <div className="flex flex-col gap-3">
                 {view === "table" ? (
                   <ResultsTable
                     items={filtered.slice(0, visible)}
