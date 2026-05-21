@@ -312,12 +312,13 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
   const enrichable: RawItem[] = [];
   const passthrough: RawItem[] = [];
   for (const r of raw) {
-    const cnpj = (r.orgao_cnpj ?? "").replace(/\D/g, "");
-    const ano = r.ano;
-    const seq = r.numero ? String(r.numero).replace(/\D/g, "") : "";
+    const parsed = parsePncpPublicUrl((r.item_url as string | undefined) || (r.url as string | undefined));
+    const cnpj = (r.orgao_cnpj ?? parsed?.cnpj ?? "").replace(/\D/g, "");
+    const ano = r.ano ?? parsed?.ano;
+    const seq = r.numero ? String(r.numero).replace(/\D/g, "") : (parsed?.sequencial ?? "");
     const isPNCP = !r._source || r._source === "PNCP" || r._source === "Transparência" || r._source === "Compras.gov.br";
-    if (isPNCP && cnpj.length === 14 && ano && seq && enrichable.length < limit) {
-      enrichable.push(r);
+    if ((isPNCP || parsed) && cnpj.length === 14 && ano && seq && enrichable.length < limit) {
+      enrichable.push({ ...r, orgao_cnpj: cnpj, ano, numero: seq, tipo_documento: r.tipo_documento ?? parsed?.tipo });
     } else {
       passthrough.push(r);
     }
@@ -347,10 +348,9 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
     if (s.status !== "fulfilled") continue;
     const { parent, items } = s.value;
     if (!items || items.length === 0) {
-      // Sem itens individuais — guarda como FALLBACK (processo inteiro),
-      // tagueado como "global" para o ranqueador empurrar pra baixo, mas
-      // ainda assim aparecer caso não haja itens unitários suficientes.
-      parentsFallback.push({ ...parent, _valorTipo: "global" });
+      // Resultado oficial do PNCP sem itens individuais não deve virar card:
+      // o usuário pediu lista de ITENS, não lista de processos/atas/editais.
+      if (parent._source === "Outro" || parent._supplier) parentsFallback.push(parent);
       continue;
     }
     // Filtra itens cuja descrição tem ao menos 1 token da consulta
@@ -382,6 +382,7 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
         valor_unitario_homologado: it.valorUnitarioHomologado,
         valor_unitario_estimado: it.valorUnitarioEstimado,
         valor_unitario: typeof unit === "number" ? unit : undefined,
+        valor_total_item: it.valorTotalHomologado ?? it.valorTotal,
         unidade_medida: it.unidadeMedida ?? parent.unidade_medida,
         quantidade: it.quantidade,
         situacao: it.situacaoCompraItemNome ?? parent.situacao,
