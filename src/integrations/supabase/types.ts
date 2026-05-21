@@ -56,6 +56,59 @@ export type Database = {
         }
         Relationships: []
       }
+      extraction_corrections: {
+        Row: {
+          created_at: string
+          embedding: string | null
+          field: string
+          id: string
+          item_id: string | null
+          query_norm: string
+          source_domain: string | null
+          source_excerpt: string | null
+          source_url: string | null
+          user_note: string | null
+          value_after: string
+          value_before: string | null
+        }
+        Insert: {
+          created_at?: string
+          embedding?: string | null
+          field: string
+          id?: string
+          item_id?: string | null
+          query_norm: string
+          source_domain?: string | null
+          source_excerpt?: string | null
+          source_url?: string | null
+          user_note?: string | null
+          value_after: string
+          value_before?: string | null
+        }
+        Update: {
+          created_at?: string
+          embedding?: string | null
+          field?: string
+          id?: string
+          item_id?: string | null
+          query_norm?: string
+          source_domain?: string | null
+          source_excerpt?: string | null
+          source_url?: string | null
+          user_note?: string | null
+          value_after?: string
+          value_before?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "extraction_corrections_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "quote_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       price_sources: {
         Row: {
           category: string
@@ -363,6 +416,27 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      match_corrections: {
+        Args: {
+          filter_domain?: string
+          match_count?: number
+          min_similarity?: number
+          query_embedding: string
+        }
+        Returns: {
+          field: string
+          id: string
+          item_id: string
+          query_norm: string
+          similarity: number
+          source_domain: string
+          source_excerpt: string
+          source_url: string
+          user_note: string
+          value_after: string
+          value_before: string
+        }[]
+      }
       match_quote_items: {
         Args: {
           match_count?: number
