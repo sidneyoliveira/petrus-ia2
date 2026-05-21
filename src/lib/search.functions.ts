@@ -13,6 +13,8 @@ const FilterSchema = z.object({
   valorMin: z.number().optional(),
   valorMax: z.number().optional(),
   pagina: z.number().int().min(1).max(50).optional(),
+  keywords: z.array(z.string().min(1).max(60)).max(20).optional(),
+  mode: z.enum(["semantic", "exact", "all_keywords"]).optional(),
 });
 
 const FORBIDDEN = [
@@ -23,6 +25,21 @@ const FORBIDDEN = [
   "olx",
   "facebook",
 ];
+
+// Heurística para detectar resultados que misturam múltiplos itens distintos
+// (ex.: "CALÇA COM ELÁSTICO, CALÇA SEM ELÁSTICO"). Resultados assim viram lote
+// e não servem para cotação unitária — devem ser filtrados.
+function looksLikeMultiItem(text: string): boolean {
+  const t = text.toLowerCase();
+  // separadores explícitos de listagem
+  const seps = (t.match(/[;\/]|(?:^|\s)e\s|\bcom\s+e\s+sem\b|,\s*[a-z]{4,}/g) ?? []).length;
+  if (seps >= 2) return true;
+  // "item 01", "item 02"
+  if (/item\s*\d+.*item\s*\d+/i.test(text)) return true;
+  // múltiplos preços no mesmo título indica lote
+  if ((t.match(/r\$\s*\d/g) ?? []).length >= 2) return true;
+  return false;
+}
 
 function tokenize(s: string): string[] {
   return (s || "")
