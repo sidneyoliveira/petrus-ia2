@@ -1912,13 +1912,29 @@ export const searchPrices = createServerFn({ method: "POST" })
       console.warn("learning boost skipped:", (e as Error).message);
     }
 
+    const sourcesSummary = summarizeSources(results, catalog);
+    const tookMs = Date.now() - t0;
+
+    // Persiste no cache (não bloqueia o retorno, mas aguardamos curto para
+    // garantir que a próxima consulta idêntica encontre o registro).
+    await writeCachedSearch({
+      query_norm,
+      query_raw: data.query,
+      filters_hash: fHash,
+      filters: JSON.parse(fHash) as Record<string, unknown>,
+      sources: sourcesSummary,
+      tookMs,
+      results,
+    });
+
     return {
       results,
       total: results.length,
       pagina,
       pageSize: 20,
       query: data.query,
-      tookMs: Date.now() - t0,
-      sources: summarizeSources(results, catalog),
+      tookMs,
+      sources: sourcesSummary,
+      fromCache: false,
     };
   });
