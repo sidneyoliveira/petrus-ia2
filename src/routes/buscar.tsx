@@ -433,6 +433,24 @@ function Buscar() {
                   />
                   <span className="text-sm">Apenas com valor</span>
                 </label>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={filters.onlyMathOk}
+                    onChange={(e) => setFilters({ ...filters, onlyMathOk: e.target.checked })}
+                    className="h-4 w-4 rounded border-input accent-accent"
+                  />
+                  <span className="text-sm">Apenas matemática ✓ (Qtd × Unit = Total)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={filters.hideLixo}
+                    onChange={(e) => setFilters({ ...filters, hideLixo: e.target.checked })}
+                    className="h-4 w-4 rounded border-input accent-accent"
+                  />
+                  <span className="text-sm">Ocultar extrações inválidas</span>
+                </label>
 
                 <button
                   onClick={() => setFilters({ uf: "", modalidade: "", unidade: "", apenasHomologados: false, onlyValor: false, minScore: 0, valorMin: "", valorMax: "", hideLixo: true, onlyMathOk: false })}
@@ -493,17 +511,27 @@ function Buscar() {
                   </div>
                 )}
                 <div className="flex flex-col gap-3">
-                  {filtered.slice(0, visible).map((it) => (
-                    <ResultCard
-                      key={it.id}
-                      item={it}
-                      onOpen={setOpened}
-                      onSave={toggleSave}
-                      saved={saved.has(it.id)}
-                      query={q}
-                    />
-                  ))}
-                </div>
+                {view === "table" ? (
+                  <ResultsTable
+                    items={filtered.slice(0, visible)}
+                    onOpen={setOpened}
+                    onSave={toggleSave}
+                    savedIds={saved}
+                  />
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {filtered.slice(0, visible).map((it) => (
+                      <ResultCard
+                        key={it.id}
+                        item={it}
+                        onOpen={setOpened}
+                        onSave={toggleSave}
+                        saved={saved.has(it.id)}
+                        query={q}
+                      />
+                    ))}
+                  </div>
+                )}
                 {visible < filtered.length && (
                   <div ref={sentinelRef} className="flex items-center justify-center py-10 text-muted-foreground text-sm">
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
