@@ -65,6 +65,143 @@ export type Database = {
         }
         Relationships: []
       }
+      quote_items: {
+        Row: {
+          cnpj: string | null
+          created_at: string
+          data: string | null
+          descricao: string | null
+          documento: string | null
+          fingerprint: string
+          fornecedor: string | null
+          homologado: boolean | null
+          id: string
+          modalidade: string | null
+          municipio: string | null
+          orgao: string | null
+          origem: string | null
+          payload: Json
+          quantidade: number | null
+          query_norm: string
+          score_final: number | null
+          search_id: string | null
+          titulo: string
+          uf: string | null
+          unidade: string | null
+          updated_at: string
+          url: string | null
+          valor: number | null
+          valor_tipo: string | null
+          valor_total: number | null
+        }
+        Insert: {
+          cnpj?: string | null
+          created_at?: string
+          data?: string | null
+          descricao?: string | null
+          documento?: string | null
+          fingerprint: string
+          fornecedor?: string | null
+          homologado?: boolean | null
+          id?: string
+          modalidade?: string | null
+          municipio?: string | null
+          orgao?: string | null
+          origem?: string | null
+          payload: Json
+          quantidade?: number | null
+          query_norm: string
+          score_final?: number | null
+          search_id?: string | null
+          titulo: string
+          uf?: string | null
+          unidade?: string | null
+          updated_at?: string
+          url?: string | null
+          valor?: number | null
+          valor_tipo?: string | null
+          valor_total?: number | null
+        }
+        Update: {
+          cnpj?: string | null
+          created_at?: string
+          data?: string | null
+          descricao?: string | null
+          documento?: string | null
+          fingerprint?: string
+          fornecedor?: string | null
+          homologado?: boolean | null
+          id?: string
+          modalidade?: string | null
+          municipio?: string | null
+          orgao?: string | null
+          origem?: string | null
+          payload?: Json
+          quantidade?: number | null
+          query_norm?: string
+          score_final?: number | null
+          search_id?: string | null
+          titulo?: string
+          uf?: string | null
+          unidade?: string | null
+          updated_at?: string
+          url?: string | null
+          valor?: number | null
+          valor_tipo?: string | null
+          valor_total?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quote_items_search_id_fkey"
+            columns: ["search_id"]
+            isOneToOne: false
+            referencedRelation: "quote_searches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      quote_searches: {
+        Row: {
+          computed_at: string
+          created_at: string
+          filters: Json
+          filters_hash: string
+          fresh_until: string
+          id: string
+          query_norm: string
+          query_raw: string
+          sources: Json
+          took_ms: number
+          total: number
+        }
+        Insert: {
+          computed_at?: string
+          created_at?: string
+          filters?: Json
+          filters_hash?: string
+          fresh_until?: string
+          id?: string
+          query_norm: string
+          query_raw: string
+          sources?: Json
+          took_ms?: number
+          total?: number
+        }
+        Update: {
+          computed_at?: string
+          created_at?: string
+          filters?: Json
+          filters_hash?: string
+          fresh_until?: string
+          id?: string
+          query_norm?: string
+          query_raw?: string
+          sources?: Json
+          took_ms?: number
+          total?: number
+        }
+        Relationships: []
+      }
       search_feedback: {
         Row: {
           action: string
@@ -106,7 +243,8 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
       [_ in never]: never
