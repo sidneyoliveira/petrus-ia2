@@ -18,9 +18,11 @@ import {
   AlertCircle,
   AlertTriangle,
   HelpCircle,
+  Wrench,
 } from "lucide-react";
 import type { PriceResult } from "@/lib/types";
 import { buildHighlightUrl } from "@/lib/highlight-source";
+import { CorrectionDialog } from "@/components/CorrectionDialog";
 
 function brl(v?: number | null) {
   if (typeof v !== "number") return "—";
@@ -91,6 +93,7 @@ interface Props {
   savedIds?: Set<string>;
   onAddToBasket?: (item: PriceResult) => void;
   basketIds?: Set<string>;
+  query?: string;
 }
 
 export function ResultsTable({
@@ -100,8 +103,11 @@ export function ResultsTable({
   savedIds,
   onAddToBasket,
   basketIds,
+  query = "",
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [correctingId, setCorrectingId] = useState<string | null>(null);
+  const correctingItem = items.find((i) => i.id === correctingId) ?? null;
 
   const toggle = (id: string) =>
     setExpanded((s) => {
