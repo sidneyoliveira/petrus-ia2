@@ -41,6 +41,64 @@ function looksLikeMultiItem(text: string): boolean {
   return false;
 }
 
+// Remove preâmbulos comuns ("TERMO DE REFERÊNCIA", "EDITAL Nº", "CONCORRÊNCIA",
+// "PREGÃO ELETRÔNICO Nº ...", numeração de item "16 ", trailing object descriptions)
+// e extrai apenas a descrição limpa do item. Trata também o caso em que o
+// "objeto_compra" do PNCP traz blocos inteiros de texto (frases concatenadas
+// com valores, unidades e código do item).
+function cleanItemTitle(raw: string | undefined): string {
+  if (!raw) return "Sem título";
+  let s = String(raw).replace(/\s+/g, " ").trim();
+
+  // 1) Remove preâmbulos jurídico-administrativos
+  s = s.replace(
+    /^(?:termo\s+de\s+refer[eê]ncia|edital|concorr[eê]ncia|preg[aã]o(?:\s+eletr[oô]nico|\s+presencial)?|tomada\s+de\s+pre[cç]os|dispensa\s+de\s+licita[cç][aã]o|inexigibilidade|chamada\s+p[uú]blica|ata\s+de\s+registro\s+de\s+pre[cç]os?|contrato|processo)\b[:\s\-nº°.\d\/]*?/i,
+    "",
+  ).trim();
+
+  // 2) Remove numeração de item no início ("16 ", "16- ", "16. ", "Item 16 - ")
+  s = s.replace(/^(?:item\s*)?\d{1,4}\s*[-–.)]\s*/i, "").trim();
+  s = s.replace(/^\d{1,4}\s+(?=[A-Za-zÀ-ÿ])/, "").trim();
+
+  // 3) Corta no primeiro separador forte que indica início de outro item / texto
+  //    livre ("... É objeto do presente contrato ...", "...34.500. 17.250. UN. 17...")
+  const stopMarkers = [
+    /\.\s+[ÉÈEe]\s+objeto\b/,
+    /\.\s+[Ff]ica\s+/,
+    /\.\s+[OoAa]\s+presente\s+/,
+    /\bUN\.\s+\d{1,4}\b/, // bloco tipo "UN. 17"
+    /\b\d+\.\d{3}\.\s+\d+\.\d{3}\.\s+UN\./, // padrão "34.500. 17.250. UN."
+  ];
+  for (const re of stopMarkers) {
+    const m = s.match(re);
+    if (m && typeof m.index === "number" && m.index > 12) {
+      s = s.slice(0, m.index).trim();
+    }
+  }
+
+  // 4) Se ainda for muito longo, corta no primeiro ponto final após 24 chars
+  if (s.length > 140) {
+    const idx = s.indexOf(". ", 24);
+    if (idx > 0 && idx < 140) s = s.slice(0, idx).trim();
+  }
+
+  // 5) Hard-cap final
+  if (s.length > 180) s = s.slice(0, 177).trimEnd() + "…";
+
+  // 6) Remove caracteres residuais
+  s = s.replace(/^[\s\-–:.,;]+/, "").replace(/[\s\-–:.,;]+$/, "");
+  return s.length >= 4 ? s : (raw.slice(0, 120) || "Sem título");
+}
+
+// Detecta blocos de texto que claramente são corpo de PDF, não o nome do item.
+// Usado para descartar resultados onde nem o título nem a descrição são utilizáveis.
+function looksLikeRawDocumentText(text: string): boolean {
+  const t = (text || "").toLowerCase();
+  if (t.length > 350) return true;
+  if (/\b(é\s+objeto\s+do\s+presente|cl[aá]usula|p[aá]ragrafo\s+[uú]nico|considerando\s+que|nos\s+termos\s+da\s+lei)\b/.test(t)) return true;
+  return false;
+}
+
 function tokenize(s: string): string[] {
   return (s || "")
     .toLowerCase()
@@ -134,9 +192,9 @@ interface RawItem {
   [k: string]: unknown;
 }
 
-async function fetchPNCP(query: string, pagina: number): Promise<RawItem[]> {
+async function fetchPNCP(query: string, pagina: number, tamanho = 50): Promise<RawItem[]> {
   const tipos = "edital,ata,contrato";
-  const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=${tipos}&ordenacao=-data&pagina=${pagina}&pagina_tam=20&status=todos`;
+  const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=${tipos}&ordenacao=-data&pagina=${pagina}&pagina_tam=${tamanho}&status=todos`;
   try {
     const res = await fetch(url, {
       headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
@@ -469,11 +527,18 @@ function buildPncpUrl(raw: RawItem): string | undefined {
 
 function toResult(raw: RawItem): PriceResult {
   // Título do ITEM (objeto da contratação) tem prioridade sobre o nome do processo.
-  const objeto = (raw.objeto_compra || raw.descricao || raw.description || "").toString().trim();
-  const processo = (raw.title || "").toString().trim();
-  const titulo = objeto || processo || "Sem título";
-  const subtitulo = objeto && processo && objeto !== processo ? processo : undefined;
-  const descricao = raw.description || raw.descricao || raw.objeto_compra || titulo;
+  const objetoRaw = (raw.objeto_compra || raw.descricao || raw.description || "").toString().trim();
+  const processoRaw = (raw.title || "").toString().trim();
+  const objeto = cleanItemTitle(objetoRaw);
+  const processo = cleanItemTitle(processoRaw);
+  // Prefere o mais curto e específico — descrições longas são quase sempre
+  // blocos de texto extraídos de PDFs (preâmbulo + cláusulas).
+  const candidates = [objeto, processo].filter((s) => s && s !== "Sem título");
+  candidates.sort((a, b) => a.length - b.length);
+  const titulo = candidates[0] || "Sem título";
+  const subtitulo =
+    candidates.length > 1 && candidates[1] !== titulo ? candidates[1] : undefined;
+  const descricao = objetoRaw || processoRaw || titulo;
   // Prioriza valor UNITÁRIO/HOMOLOGADO do item sobre valor total do processo
   const valor =
     typeof raw.valor_unitario_homologado === "number"
@@ -589,26 +654,51 @@ export const searchPrices = createServerFn({ method: "POST" })
     const knownDomains = new Set(catalog.map((s) => s.domain));
     const siteFilters = catalog.map((s) => s.domain);
 
-    // 2) Busca paralela em múltiplas fontes oficiais + variações + Firecrawl (se habilitado)
+    // 2) Busca paralela MASSIVA em múltiplas fontes oficiais + variações de query
+    //    (várias páginas, várias fontes, vários filtros de site no Firecrawl).
     const tasks: Promise<RawItem[]>[] = [];
     for (const v of variants) {
-      tasks.push(fetchPNCP(v, pagina));
+      // PNCP — varre 3 páginas de cada variante (3 × 50 = 150 por variante)
+      tasks.push(fetchPNCP(v, pagina, 50));
+      tasks.push(fetchPNCP(v, pagina + 1, 50));
+      tasks.push(fetchPNCP(v, pagina + 2, 50));
       tasks.push(fetchComprasGov(v));
       tasks.push(fetchTransparencia(v));
     }
-    tasks.push(fetchFirecrawlWeb(data.query, siteFilters));
-    // chama Firecrawl 2x — uma com filtros gov.br federal, outra com TCEs
+    // Firecrawl — chama com vários conjuntos de domínios para diversificar
     const tceDomains = catalog.filter((s) => s.domain.startsWith("tce.")).map((s) => s.domain);
-    if (tceDomains.length > 0) tasks.push(fetchFirecrawlWeb(data.query, tceDomains));
+    const govFederal = catalog
+      .filter((s) => /(^|\.)gov\.br$/.test(s.domain) && !s.domain.startsWith("tce."))
+      .map((s) => s.domain);
+    for (const v of variants.slice(0, 3)) {
+      tasks.push(fetchFirecrawlWeb(v, siteFilters));
+      if (tceDomains.length > 0) tasks.push(fetchFirecrawlWeb(v, tceDomains));
+      if (govFederal.length > 0) tasks.push(fetchFirecrawlWeb(v, govFederal));
+    }
     const settled = await Promise.allSettled(tasks);
     let raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
 
+    // 2a) Deduplica raw por (cnpj|ano|numero) antes do enrich (evita chamadas duplicadas)
+    const seenRaw = new Set<string>();
+    raw = raw.filter((r) => {
+      const k = `${r.orgao_cnpj ?? ""}|${r.ano ?? ""}|${r.numero ?? ""}|${(r.title ?? "").slice(0, 60)}`;
+      if (seenRaw.has(k)) return false;
+      seenRaw.add(k);
+      return true;
+    });
+
     // 2b) Enriquece com ITENS individuais do PNCP para ter valor unitário real
     // (a busca do PNCP só devolve processos inteiros — sem isto, o "valor" exibido
-    // acaba sendo o total do lote).
-    raw = await enrichWithPNCPItems(raw, data.query, 12);
+    // acaba sendo o total do lote). Aumentamos o limite para acompanhar o fanout.
+    raw = await enrichWithPNCPItems(raw, data.query, 30);
 
     let results = raw.map(toResult);
+
+    // Descarta resultados cujo título E descrição parecem corpo de PDF
+    // (preâmbulos, cláusulas, etc.) — sem ter como extrair item específico.
+    results = results.filter(
+      (r) => !(looksLikeRawDocumentText(r.titulo) && looksLikeRawDocumentText(r.descricao)),
+    );
 
     // Descarta resultados com valor claramente do processo todo quando exceder
     // um teto razoável para um único item (heurística: > R$ 500.000 sem unidade).
