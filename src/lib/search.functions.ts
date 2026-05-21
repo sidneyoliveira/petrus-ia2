@@ -601,8 +601,23 @@ export const searchPrices = createServerFn({ method: "POST" })
     const tceDomains = catalog.filter((s) => s.domain.startsWith("tce.")).map((s) => s.domain);
     if (tceDomains.length > 0) tasks.push(fetchFirecrawlWeb(data.query, tceDomains));
     const settled = await Promise.allSettled(tasks);
-    const raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+    let raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+
+    // 2b) Enriquece com ITENS individuais do PNCP para ter valor unitário real
+    // (a busca do PNCP só devolve processos inteiros — sem isto, o "valor" exibido
+    // acaba sendo o total do lote).
+    raw = await enrichWithPNCPItems(raw, data.query, 12);
+
     let results = raw.map(toResult);
+
+    // Descarta resultados com valor claramente do processo todo quando exceder
+    // um teto razoável para um único item (heurística: > R$ 500.000 sem unidade).
+    results = results.filter((r) => {
+      if (r.valorTipo !== "global") return true;
+      if (typeof r.valor !== "number") return true;
+      if (r.valor > 500_000 && !r.unidade) return false;
+      return true;
+    });
 
     // Auto-descoberta: registra novos domínios encontrados pelo Firecrawl
     void registerDiscoveredDomains(
