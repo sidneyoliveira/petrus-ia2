@@ -265,7 +265,11 @@ function buildPncpUrl(raw: RawItem): string | undefined {
 }
 
 function toResult(raw: RawItem): PriceResult {
-  const titulo = raw.title || raw.objeto_compra || raw.descricao || raw.description || "Sem título";
+  // Título do ITEM (objeto da contratação) tem prioridade sobre o nome do processo.
+  const objeto = (raw.objeto_compra || raw.descricao || raw.description || "").toString().trim();
+  const processo = (raw.title || "").toString().trim();
+  const titulo = objeto || processo || "Sem título";
+  const subtitulo = objeto && processo && objeto !== processo ? processo : undefined;
   const descricao = raw.description || raw.descricao || raw.objeto_compra || titulo;
   const valor =
     typeof raw.valor_global === "number"
@@ -291,6 +295,7 @@ function toResult(raw: RawItem): PriceResult {
   return {
     id,
     titulo: String(titulo),
+    subtitulo,
     descricao: String(descricao),
     unidade: raw.unidade_medida,
     valor,
@@ -307,7 +312,7 @@ function toResult(raw: RawItem): PriceResult {
     ano: raw.ano ? String(raw.ano) : undefined,
     origem: (raw["_source"] as PriceResult["origem"]) || "PNCP",
     documento,
-    url: raw.item_url || raw.url,
+    url: buildPncpUrl(raw),
     homologado,
     scoreTextual: 0,
     scoreSemantico: 0,
