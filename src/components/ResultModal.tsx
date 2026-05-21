@@ -1,5 +1,5 @@
-import { X, ExternalLink, Award } from "lucide-react";
-import { useEffect } from "react";
+import { X, ExternalLink, Award, FileSearch, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { PriceResult } from "@/lib/types";
 import { ScoreBar } from "./ScoreBar";
 
@@ -20,8 +20,16 @@ interface Props {
 }
 
 export function ResultModal({ item, onClose }: Props) {
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrText, setOcrText] = useState<string | null>(null);
+  const [ocrError, setOcrError] = useState<string | null>(null);
+  const [ocrMeta, setOcrMeta] = useState<{ pages?: number; chars?: number; truncated?: boolean } | null>(null);
+
   useEffect(() => {
     if (!item) return;
+    setOcrText(null);
+    setOcrError(null);
+    setOcrMeta(null);
     const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", h);
     document.body.style.overflow = "hidden";
@@ -32,6 +40,31 @@ export function ResultModal({ item, onClose }: Props) {
   }, [item, onClose]);
 
   if (!item) return null;
+
+  const runOcr = async () => {
+    if (!item.url) return;
+    setOcrLoading(true);
+    setOcrError(null);
+    setOcrText(null);
+    try {
+      const res = await fetch("/api/ocr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: item.url }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setOcrError(data.error || `Falha (HTTP ${res.status})`);
+      } else {
+        setOcrText(data.text);
+        setOcrMeta({ pages: data.pages, chars: data.chars, truncated: data.truncated });
+      }
+    } catch (e) {
+      setOcrError((e as Error).message);
+    } finally {
+      setOcrLoading(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6 animate-in fade-in" onClick={onClose}>
@@ -103,14 +136,53 @@ export function ResultModal({ item, onClose }: Props) {
           </section>
 
           {item.url && (
-            <a
-              href={item.url}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-smooth hover:opacity-90"
-            >
-              Abrir fonte original <ExternalLink className="h-4 w-4" />
-            </a>
+            <div className="flex flex-wrap items-center gap-2">
+              <a
+                href={item.url}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-smooth hover:opacity-90"
+              >
+                Abrir fonte original <ExternalLink className="h-4 w-4" />
+              </a>
+              <button
+                onClick={runOcr}
+                disabled={ocrLoading}
+                className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-secondary transition-smooth disabled:opacity-60"
+              >
+                {ocrLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
+                Extrair texto do PDF
+              </button>
+            </div>
+          )}
+
+          {(ocrText || ocrError || ocrLoading) && (
+            <section className="rounded-xl border border-border bg-secondary/30 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                  OCR / Extração de PDF
+                </div>
+                {ocrMeta && (
+                  <div className="text-[11px] text-muted-foreground tabular-nums">
+                    {ocrMeta.pages} págs · {ocrMeta.chars?.toLocaleString("pt-BR")} caracteres
+                    {ocrMeta.truncated ? " · truncado" : ""}
+                  </div>
+                )}
+              </div>
+              {ocrError && (
+                <div className="text-sm text-destructive">{ocrError}</div>
+              )}
+              {ocrLoading && !ocrText && (
+                <div className="text-sm text-muted-foreground flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Baixando e analisando documento…
+                </div>
+              )}
+              {ocrText && (
+                <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs leading-relaxed font-mono text-foreground/90">
+                  {ocrText}
+                </pre>
+              )}
+            </section>
           )}
         </div>
       </div>
