@@ -1555,8 +1555,8 @@ export const searchPrices = createServerFn({ method: "POST" })
     // 2b) Enriquece com ITENS individuais do PNCP para ter valor unitário real.
     // A busca do PNCP só devolve processos inteiros — sem o /itens o usuário
     // veria apenas o "objeto do contrato" (descrição do processo todo).
-    // Aumentamos bastante o limite para garantir cobertura por item.
-    raw = await enrichWithPNCPItems(raw, data.query, 120);
+    // Limite alto para garantir cobertura por item.
+    raw = await enrichWithPNCPItems(raw, data.query, 250);
 
     let results = raw.map(toResult);
 
