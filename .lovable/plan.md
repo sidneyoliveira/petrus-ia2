@@ -1,113 +1,121 @@
 ## Objetivo
 
-1. **Cache persistente** — toda busca grava no banco. Próxima busca igual (ou semelhante) devolve resultado em milissegundos enquanto, em segundo plano, refaz a varredura completa e atualiza o cache.
-2. **Corrigir extração de itens** — a busca está mostrando o "objeto do contrato" (texto do processo inteiro) em vez dos itens granulares (descrição + UN + qtd + valor unitário + valor total), mesmo quando esses itens existem na API do PNCP ou na página da contratação.
+Buscar a mesma cotação em **várias fontes públicas simultaneamente** (PNCP, TCEs estaduais, scraping/dorking via Firecrawl), normalizar tudo no mesmo schema `PriceResult`, persistir em `quote_items` e devolver ao usuário com lastro (URL da fonte + trecho original).
 
----
-
-## Parte 1 — Banco de dados de cache
-
-### Migration nova (`supabase/migrations/...`)
-
-Duas tabelas + um índice trigram para busca por similaridade.
-
-**`quote_searches`** — uma linha por busca executada
-- `id uuid pk`
-- `query_norm text` (normalizado: minúsculo, sem acento, sem stop-words)
-- `query_raw text`
-- `filters jsonb` (uf, modalidade, valor min/max, etc.)
-- `total int`, `took_ms int`
-- `sources jsonb` (status por fonte)
-- `computed_at timestamptz default now()`
-- `fresh_until timestamptz` (computed_at + 24h por padrão)
-- `unique (query_norm, filters)` para upsert
-
-**`quote_items`** — uma linha por item de cotação encontrado, dedup global
-- `id uuid pk`
-- `fingerprint text unique` (hash de cnpj+ano+numero+numeroItem ou url+descricao+valor)
-- `search_id uuid fk -> quote_searches.id`
-- `query_norm text` (denormalizado p/ busca por palavra)
-- `titulo text`, `descricao text`, `unidade text`, `quantidade numeric`
-- `valor numeric`, `valor_total numeric`, `valor_tipo text`
-- `fornecedor text`, `cnpj text`, `orgao text`, `municipio text`, `uf text`
-- `data date`, `modalidade text`, `homologado bool`
-- `origem text`, `url text`, `documento text`
-- `score_final numeric`
-- `payload jsonb` (PriceResult completo p/ rehidratar sem recalcular)
-- `created_at timestamptz default now()`
-
-**Índices**
-- `gin (to_tsvector('portuguese', titulo || ' ' || descricao))` para busca textual rápida
-- `gin (query_norm gin_trgm_ops)` para "consultas parecidas"
-- `btree (search_id)`, `btree (cnpj, ano)` para refresh
-
-**RLS**: leitura pública (`USING (true)`), insert/update apenas via service role (`supabaseAdmin`) — o usuário final nunca escreve direto.
-
-### Fluxo no `searchPrices` (server fn)
+## Arquitetura (equivalência Django → stack atual)
 
 ```text
-1. normaliza query → query_norm
-2. SELECT do cache (quote_searches WHERE query_norm = $1 AND filters = $2)
-   ├─ HIT FRESCO (fresh_until > now)  → devolve {fromCache: true, results, computedAt}
-   ├─ HIT VELHO                       → devolve cache imediato + dispara refresh
-   └─ MISS                            → faz busca completa, grava e devolve
-
-3. Em paralelo (background, sem await na resposta):
-   - executa pipeline atual (PNCP + Firecrawl + TCE-CE + mineAttachments)
-   - upsert em quote_searches e quote_items
+                 src/routes/buscar.tsx (React)
+                            │
+                            ▼  useServerFn
+              src/lib/search.functions.ts (RPC)
+                            │
+            ┌───────────────┼─────────────────────────┐
+            ▼               ▼                         ▼
+   pncp.source.ts    tce.source.ts              dorking.source.ts
+   (API oficial)     (TCE-CE/SP/MG via API)     (Firecrawl /search)
+            │               │                         │
+            └───────┬───────┴────────────┬────────────┘
+                    ▼                    ▼
+            normalize() → PriceResult     enrich.ts
+                    │              (BrasilAPI/ReceitaWS p/ CNPJ)
+                    ▼
+            quote_items (cache + lastro)
 ```
 
-Para o "refresh em background com UI ao vivo": adicionar uma server fn nova `refreshSearch(query_norm)` que o front chama via `useMutation` logo após receber o cache; quando ela termina, o front invalida a query e mostra os resultados frescos.
+Cada fonte é um módulo isolado com a mesma interface:
 
-### UI (`src/routes/buscar.tsx`)
-
-- Mostrar badge "📦 Cache de Xmin atrás — buscando ao vivo…" enquanto o background roda.
-- Quando o refresh termina, banner verde "✓ Resultados atualizados" e a lista re-renderiza.
-- Card de resultado ganha um campo opcional `cachedAt`.
-
----
-
-## Parte 2 — Correção da extração de itens
-
-### Diagnóstico
-
-O `enrichWithPNCPItems` já existe e expande processo→itens via `/pncp-api/v1/orgaos/{cnpj}/compras/{ano}/{seq}/itens`. Quando o usuário pesquisa, três coisas estão falhando:
-
-1. **Resultados da busca PNCP (`/api/search/`) não trazem `orgao_cnpj`, `ano`, `numero` em todos os casos** — vêm em `numero_controle_pncp` (formato `CNPJ-1-SEQ/ANO`). O parser `parseNumeroControlePncpCompra` existe mas só é usado em contratos, não no item raw. Resultado: muitos PNCPs caem no `passthrough` e aparecem como "objeto do contrato".
-
-2. **`item_url` do PNCP às vezes aponta para `/contratos/...`** — o código chama `resolvePncpCompraFromContract` mas o link da busca é `/editais/...` ou `/compras/...` na maioria dos casos. Quando aponta pra contrato e a API `/contratos/{ano}/{seq}` devolve outro `numeroControlePncpCompra`, a expansão funciona; quando não devolve, perdemos os itens.
-
-3. **`isGranularItemResult` exige `unidade || quantidade || valorTotal || valorTipo unitario_*`** — itens minerados de PDF/HTML às vezes não têm `unidade` (só descrição + valor) e são descartados pela regra "se há granular, remove processos" da linha 1612.
-
-### Fixes (em `src/lib/search.functions.ts`)
-
-1. **Sempre derivar cnpj/ano/seq de `numero_controle_pncp`** quando os campos diretos faltarem:
 ```ts
-// dentro de enrichWithPNCPItems, antes do parsed:
-const fromControle = parseNumeroControlePncpCompra(r.numero_controle_pncp);
-const cnpj = (r.orgao_cnpj ?? parsed?.cnpj ?? fromControle?.cnpj ?? "").replace(/\D/g, "");
-const ano = r.ano ?? parsed?.ano ?? fromControle?.ano;
-const seqRaw = r.numero_sequencial_compra_ata ?? r.numero_sequencial ?? r.numero ?? parsed?.sequencial ?? fromControle?.sequencial ?? "";
+export interface PriceSource {
+  id: "pncp" | "tce-ce" | "tce-sp" | "tce-mg" | "dork-pdf" | "dork-html";
+  search(q: NormalizedQuery, signal: AbortSignal): Promise<PriceResult[]>;
+}
 ```
 
-2. **Limite `enrichable` mais alto** (já é 120; passar a 200 + remover o `enrichable.length < limit` que cortava silenciosamente).
+O agregador faz `Promise.allSettled` com timeout por fonte (15s) e retorna o que chegou + status por fonte (já temos `SearchSourceStatus`).
 
-3. **Fallback de scrape**: se `fetchPncpItens` voltar vazio E temos `item_url`, faz scrape via Firecrawl da página `/app/...` e roda `extractItemsFromHtmlTables` + LLM ontológico que já existe. Isso resolve o caso "página tem itens visíveis mas API não devolve".
+## Entregáveis desta rodada
 
-4. **Afrouxar `isGranularItemResult`** — aceitar quando `r.valor` existe e o título não é processo/objeto, mesmo sem unidade.
+### 1. Estrutura de pastas
+```text
+src/lib/sources/
+  index.ts              # registry + agregador com Promise.allSettled
+  pncp.source.ts        # já existe parcialmente em search.functions.ts → extrair
+  tce-ce.source.ts      # API LCO do TCE-CE
+  tce-sp.source.ts      # API aberta do TCE-SP
+  tce-mg.source.ts      # API aberta do TCE-MG
+  dorking.source.ts     # Firecrawl /v2/search com queries dork
+  enrich/
+    cnpj.ts             # BrasilAPI + fallback ReceitaWS
+    cnae.ts             # bate CNAE × item (peso no scoreFinal)
+```
 
-5. **Logar** (`console.info`) quantos foram enriquecidos vs. passthrough vs. fallback de scrape, para o usuário ver via `server-function-logs` se voltar a falhar.
+### 2. Schema do banco (nova migração)
+- Adicionar coluna `source_payload_raw jsonb` em `quote_items` (lastro bruto pra auditoria futura).
+- Adicionar `source_excerpt text` (trecho original onde o valor foi extraído — base do "Ver Fonte Original").
+- Nova tabela `source_runs` (telemetria por fonte por busca: `source_id`, `search_id`, `status`, `count`, `took_ms`, `error`) — alimenta o painel de saúde das fontes.
+- Nova tabela `cnpj_cache` (TTL 30 dias): `cnpj`, `razao`, `cnae`, `ativo`, `fetched_at` — evita martelar BrasilAPI.
 
----
+### 3. Conector Firecrawl
+Conectar via `standard_connectors--connect` com `connector_id: "firecrawl"` (não está conectado ainda — vou disparar o picker). Vai prover `FIRECRAWL_API_KEY` no `process.env` para o `dorking.source.ts`.
 
-## Entrega
+### 4. Queries de dorking (exemplos que vão pro Firecrawl)
+- `filetype:pdf "ata de registro de preços" "{termo}" "valor unitário" site:gov.br`
+- `filetype:pdf "termo de homologação" "{termo}" "R$" site:gov.br`
+- `"{termo}" "menor preço" "homologado" site:tce.{uf}.gov.br`
 
-1. Migration SQL (cache + RLS + índices + extensão pg_trgm).
-2. Edit em `src/lib/search.functions.ts`:
-   - Helpers `normalizeQuery`, `readCache`, `writeCache`.
-   - Wrap do `searchPrices` para cache-first + background refresh.
-   - Fixes 1–5 acima na extração de itens.
-3. Edit em `src/routes/buscar.tsx`: badge de cache + banner de refresh + invalidação de query.
-4. Edit em `src/lib/types.ts`: campos opcionais `fromCache`, `cachedAt`.
+Limit 10 resultados por dork, com `scrapeOptions.formats=['markdown']` pra já vir o conteúdo extraível.
 
-Sem mudanças em outras telas/funcionalidades. Sem mexer em arquivos auto-gerados.
+### 5. Cache-first + revalidação em background
+- `search.functions.ts` consulta `quote_searches` por `(query_norm, filters_hash)`.
+- Se `fresh_until > now()` → retorna do cache imediatamente (`fromCache: true`).
+- Se `stale` → retorna cache **e** dispara fan-out novo em background via rota `/api/public/hooks/revalidate-search` (chamada via `fetch` no próprio handler, sem aguardar).
+- Se não existe → fan-out síncrono e persiste.
+
+### 6. Agregador resiliente
+```ts
+const results = await Promise.allSettled(
+  sources.map(s => withTimeout(s.search(q, signal), 15_000))
+);
+// telemetria por fonte vai pra source_runs, payload pra quote_items
+```
+Fonte que falhar **não derruba a busca** — só aparece com `status: "error"` no `sources[]`.
+
+### 7. Validação defensiva (mantém o pncp-rules.ts existente)
+Toda fonte passa pelo mesmo pipeline:
+1. `normalize()` para `PriceResult`
+2. `pncp-rules.detectValorTipo()` — se vier "global" sem unitário → marca pra re-extração (Self-Healing fica pra rodada 2, mas o marcador já é gravado).
+3. `enrichCNPJ()` se tiver CNPJ → joga `cnpj_cache`.
+
+## Fora de escopo desta rodada (próximas etapas)
+
+- Self-Healing loop com Lovable AI (rodada 2)
+- pgvector + RAG de feedback (rodada 3)
+- Botão "Ver Fonte Original" com highlight visual no PDF (rodada 4) — mas **já gravo `source_excerpt`** pra rodada 4 só precisar renderizar
+- Scraping de agregadores privados (M2A, BLL, LicitaNet) — depende de avaliar se Firecrawl supera o bloqueio
+
+## Riscos conhecidos
+
+- **APIs de TCE são instáveis e variam por estado.** Vou começar só com TCE-CE (mais documentado) e deixar TCE-SP/MG como stub que retorna `[]` até validar manualmente o endpoint. Não quero inventar URLs.
+- **Firecrawl consome créditos.** Cada dork = 1 search + N scrapes. Vou limitar a 2 dorks × 10 resultados = ~20 créditos por busca não-cacheada. Cache de 24h reduz drasticamente.
+- **Cloudflare Worker tem timeout.** Fan-out paralelo com timeout 15s por fonte e cap total de 25s.
+
+## Detalhes técnicos
+
+- Server functions: `createServerFn` (não Edge Functions Supabase — esta stack é TanStack Start em Worker).
+- Validação de input: Zod (já em uso).
+- Tipos compartilhados: `PriceResult` em `src/lib/types.ts` já cobre tudo.
+- Logs: `console.log` estruturado por fonte → visível em `server-function-logs`.
+- Sem rate-limiting custom (não é primitivo do backend ainda) — confio em Firecrawl + cache do DB.
+
+## Plano de execução
+
+1. Conectar Firecrawl (picker interativo)
+2. Migração do schema (`source_runs`, `cnpj_cache`, colunas novas)
+3. Refatorar `search.functions.ts` para usar o registry `src/lib/sources/`
+4. Implementar `pncp.source.ts` (extrair do existente, sem mudar lógica)
+5. Implementar `tce-ce.source.ts`
+6. Implementar `dorking.source.ts` (Firecrawl)
+7. Implementar `enrich/cnpj.ts` (BrasilAPI)
+8. Wire-up no agregador + telemetria em `source_runs`
+9. Smoke-test via `invoke-server-function` em produção
