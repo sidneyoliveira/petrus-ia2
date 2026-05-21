@@ -7,6 +7,7 @@ import { safeUnitValue } from "./pncp-rules";
 import { logSourceRunsBatch, type SourceRunInput } from "./telemetry";
 import { enrichCnpjsBackground } from "./enrich/cnpj";
 import { healValuesBackground } from "./heal/value-healer.server";
+import { embedQuoteItemsBackground } from "./embed/embedder.server";
 
 const asJson = <T,>(v: T): Json => v as unknown as Json;
 
@@ -1943,6 +1944,10 @@ export const searchPrices = createServerFn({ method: "POST" })
         // Self-Healing — quando há itens só com valor_total, infere o
         // unitário a partir do source_excerpt via Lovable AI.
         void healValuesBackground(searchId);
+
+        // Embeddings (pgvector) — gera vetores semânticos para RAG e
+        // busca por similaridade entre cotações históricas.
+        void embedQuoteItemsBackground(searchId ?? undefined);
       } catch (e) {
         console.warn("source_runs log failed", (e as Error).message);
       }
