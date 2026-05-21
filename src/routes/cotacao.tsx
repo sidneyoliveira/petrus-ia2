@@ -1,0 +1,256 @@
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useMemo } from "react";
+import { Trash2, Download, ShoppingBasket, ExternalLink, FileSpreadsheet } from "lucide-react";
+import { SiteHeader } from "@/components/SiteHeader";
+import { SiteFooter } from "@/components/SiteFooter";
+import { useBasket } from "@/lib/basket";
+
+export const Route = createFileRoute("/cotacao")({
+  component: CotacaoPage,
+  head: () => ({
+    meta: [
+      { title: "Minha cotação · CotaçãoIA" },
+      { name: "description", content: "Monte sua Nota Técnica de preços a partir de itens selecionados de múltiplas fontes." },
+      { property: "og:title", content: "Minha cotação · CotaçãoIA" },
+      { property: "og:description", content: "Monte sua Nota Técnica de preços a partir de itens selecionados de múltiplas fontes." },
+    ],
+  }),
+});
+
+function brl(v?: number | null) {
+  if (typeof v !== "number") return "—";
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
+}
+
+function CotacaoPage() {
+  const { items, remove, setQuantidade, clear } = useBasket();
+
+  const totals = useMemo(() => {
+    let totalGeral = 0;
+    let comUnitario = 0;
+    const rows = items.map((b) => {
+      const unit = typeof b.item.valor === "number" ? b.item.valor : null;
+      const subtotal = unit !== null ? unit * b.quantidade : null;
+      if (subtotal !== null) {
+        totalGeral += subtotal;
+        comUnitario += 1;
+      }
+      return { ...b, unit, subtotal };
+    });
+    const unitVals = rows
+      .map((r) => r.unit)
+      .filter((v): v is number => typeof v === "number" && v > 0);
+    const media = unitVals.length
+      ? unitVals.reduce((s, v) => s + v, 0) / unitVals.length
+      : 0;
+    const sorted = [...unitVals].sort((a, b) => a - b);
+    const mediana = sorted.length
+      ? sorted[Math.floor(sorted.length / 2)]
+      : 0;
+    return { rows, totalGeral, comUnitario, media, mediana };
+  }, [items]);
+
+  const exportCotacaoCSV = () => {
+    const headers = [
+      "Item",
+      "Unidade",
+      "Qtd cotada",
+      "Valor unitário (R$)",
+      "Subtotal (R$)",
+      "Fornecedor",
+      "Órgão",
+      "UF",
+      "Data",
+      "Origem",
+      "URL",
+    ];
+    const esc = (s: unknown) => `"${String(s ?? "").replace(/"/g, '""')}"`;
+    const lines = totals.rows.map((r) =>
+      [
+        r.item.objetoEstruturado || r.item.titulo,
+        r.item.unidade ?? "",
+        r.quantidade,
+        typeof r.unit === "number" ? r.unit.toFixed(2).replace(".", ",") : "",
+        typeof r.subtotal === "number" ? r.subtotal.toFixed(2).replace(".", ",") : "",
+        r.item.fornecedor ?? "",
+        r.item.orgao ?? "",
+        r.item.uf ?? "",
+        r.item.data ?? "",
+        r.item.origem,
+        r.item.url ?? "",
+      ].map(esc).join(";"),
+    );
+    const csv = "\ufeff" + [headers.join(";"), ...lines].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `minha-cotacao-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col bg-background">
+      <SiteHeader />
+      <main className="flex-1">
+        <section className="border-b border-border/60 bg-card/40">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2">
+                  <ShoppingBasket className="h-5 w-5 text-accent" />
+                  Minha cotação
+                </h1>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Itens selecionados de múltiplas fontes para compor sua Nota Técnica de preços (Lei 14.133, IN 65/2021).
+                </p>
+              </div>
+              {items.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={exportCotacaoCSV}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 transition-smooth"
+                  >
+                    <FileSpreadsheet className="h-3.5 w-3.5" /> Exportar CSV
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirm("Limpar todos os itens da cotação?")) clear();
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs hover:bg-secondary transition-smooth"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Limpar
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
+          {items.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border bg-card/40 p-12 text-center">
+              <div className="mx-auto h-12 w-12 rounded-full bg-accent/15 text-accent inline-flex items-center justify-center mb-4">
+                <ShoppingBasket className="h-5 w-5" />
+              </div>
+              <div className="font-semibold mb-1">Sua cotação está vazia</div>
+              <p className="text-sm text-muted-foreground max-w-md mx-auto mb-5">
+                Na pesquisa, expanda qualquer linha da tabela e clique em <span className="text-foreground font-medium">"Adicionar à cotação"</span> para começar.
+              </p>
+              <Link
+                to="/buscar"
+                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
+              >
+                Ir para pesquisa
+              </Link>
+            </div>
+          ) : (
+            <>
+              <div className="mb-4 grid grid-cols-2 md:grid-cols-4 gap-2 rounded-xl border border-border bg-card p-3">
+                <Stat label="Itens" value={String(items.length)} />
+                <Stat label="Total geral" value={brl(totals.totalGeral)} accent />
+                <Stat label="Média unitária" value={brl(totals.media)} />
+                <Stat label="Mediana unitária" value={brl(totals.mediana)} />
+              </div>
+
+              <div className="rounded-xl border border-border bg-card overflow-hidden shadow-card">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-secondary/30">
+                      <tr className="text-left text-xs text-muted-foreground">
+                        <th className="px-3 py-2.5 font-medium">Item</th>
+                        <th className="px-3 py-2.5 font-medium w-20">Un.</th>
+                        <th className="px-3 py-2.5 font-medium w-28 text-right">Qtd</th>
+                        <th className="px-3 py-2.5 font-medium w-32 text-right">Unitário</th>
+                        <th className="px-3 py-2.5 font-medium w-32 text-right">Subtotal</th>
+                        <th className="px-3 py-2.5 font-medium w-12"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {totals.rows.map((r) => (
+                        <tr key={r.item.id} className="border-t border-border/60 align-top">
+                          <td className="px-3 py-3">
+                            <div className="font-medium leading-snug line-clamp-2">
+                              {r.item.objetoEstruturado || r.item.titulo}
+                            </div>
+                            <div className="mt-1 text-[11px] text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5">
+                              <span className="uppercase tracking-wider">{r.item.origem}</span>
+                              {r.item.orgao && <span className="truncate max-w-[20rem]" title={r.item.orgao}>{r.item.orgao}</span>}
+                              {r.item.uf && <span>{r.item.uf}</span>}
+                              {r.item.fornecedor && <span className="truncate max-w-[16rem]" title={r.item.fornecedor}>{r.item.fornecedor}</span>}
+                              {r.item.url && (
+                                <a
+                                  href={r.item.url}
+                                  target="_blank"
+                                  rel="noreferrer noopener"
+                                  className="inline-flex items-center gap-1 hover:text-foreground"
+                                >
+                                  fonte <ExternalLink className="h-3 w-3" />
+                                </a>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 uppercase text-xs">{r.item.unidade || "—"}</td>
+                          <td className="px-3 py-3 text-right">
+                            <input
+                              type="number"
+                              min={0}
+                              step="any"
+                              value={r.quantidade}
+                              onChange={(e) => setQuantidade(r.item.id, Number(e.target.value))}
+                              className="w-24 rounded-md border border-input bg-background px-2 py-1 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-ring"
+                            />
+                          </td>
+                          <td className="px-3 py-3 text-right tabular-nums">{brl(r.unit)}</td>
+                          <td className="px-3 py-3 text-right tabular-nums font-medium">
+                            {brl(r.subtotal)}
+                          </td>
+                          <td className="px-3 py-3">
+                            <button
+                              onClick={() => remove(r.item.id)}
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border hover:bg-destructive/10 hover:text-destructive transition-smooth"
+                              title="Remover"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-secondary/20">
+                      <tr className="border-t border-border/60">
+                        <td colSpan={4} className="px-3 py-3 text-right text-xs uppercase tracking-wider text-muted-foreground">
+                          Total geral
+                        </td>
+                        <td className="px-3 py-3 text-right text-base font-semibold text-accent tabular-nums">
+                          {brl(totals.totalGeral)}
+                        </td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+              <p className="mt-3 text-[11px] text-muted-foreground">
+                Itens sem valor unitário (apenas total global do processo) não entram no cálculo.
+              </p>
+            </>
+          )}
+        </div>
+      </main>
+      <SiteFooter />
+    </div>
+  );
+}
+
+function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className={`text-base font-semibold tabular-nums truncate ${accent ? "text-accent" : ""}`} title={value}>{value}</div>
+    </div>
+  );
+}

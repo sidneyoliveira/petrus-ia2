@@ -11,6 +11,7 @@ import { ResultsTable } from "@/components/ResultsTable";
 import { ResultModal } from "@/components/ResultModal";
 import { searchPrices } from "@/lib/search.functions";
 import { exportCSV, exportJSON, exportTXT } from "@/lib/export";
+import { useBasket } from "@/lib/basket";
 import type { PriceResult } from "@/lib/types";
 
 const UFS = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
@@ -59,6 +60,7 @@ function Buscar() {
   >("compat");
   const [opened, setOpened] = useState<PriceResult | null>(null);
   const [saved, setSaved] = useState<Set<string>>(new Set());
+  const basket = useBasket();
   const [view, setView] = useState<"table" | "cards">("table");
   const [visible, setVisible] = useState(12);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -532,6 +534,8 @@ function Buscar() {
                     onOpen={setOpened}
                     onSave={toggleSave}
                     savedIds={saved}
+                    onAddToBasket={(it) => basket.toggle(it, q)}
+                    basketIds={basket.ids}
                   />
                 ) : (
                   <div className="flex flex-col gap-3">

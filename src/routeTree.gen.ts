@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SobreRouteImport } from './routes/sobre'
 import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
+import { Route as CotacaoRouteImport } from './routes/cotacao'
 import { Route as BuscarRouteImport } from './routes/buscar'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiOcrRouteImport } from './routes/api/ocr'
@@ -23,6 +24,11 @@ const SobreRoute = SobreRouteImport.update({
 const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
   id: '/sitemap.xml',
   path: '/sitemap.xml',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CotacaoRoute = CotacaoRouteImport.update({
+  id: '/cotacao',
+  path: '/cotacao',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BuscarRoute = BuscarRouteImport.update({
@@ -44,6 +50,7 @@ const ApiOcrRoute = ApiOcrRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/buscar': typeof BuscarRoute
+  '/cotacao': typeof CotacaoRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
   '/api/ocr': typeof ApiOcrRoute
@@ -51,6 +58,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/buscar': typeof BuscarRoute
+  '/cotacao': typeof CotacaoRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
   '/api/ocr': typeof ApiOcrRoute
@@ -59,21 +67,36 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/buscar': typeof BuscarRoute
+  '/cotacao': typeof CotacaoRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
   '/api/ocr': typeof ApiOcrRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/buscar' | '/sitemap.xml' | '/sobre' | '/api/ocr'
+  fullPaths:
+    | '/'
+    | '/buscar'
+    | '/cotacao'
+    | '/sitemap.xml'
+    | '/sobre'
+    | '/api/ocr'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/buscar' | '/sitemap.xml' | '/sobre' | '/api/ocr'
-  id: '__root__' | '/' | '/buscar' | '/sitemap.xml' | '/sobre' | '/api/ocr'
+  to: '/' | '/buscar' | '/cotacao' | '/sitemap.xml' | '/sobre' | '/api/ocr'
+  id:
+    | '__root__'
+    | '/'
+    | '/buscar'
+    | '/cotacao'
+    | '/sitemap.xml'
+    | '/sobre'
+    | '/api/ocr'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BuscarRoute: typeof BuscarRoute
+  CotacaoRoute: typeof CotacaoRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   SobreRoute: typeof SobreRoute
   ApiOcrRoute: typeof ApiOcrRoute
@@ -93,6 +116,13 @@ declare module '@tanstack/react-router' {
       path: '/sitemap.xml'
       fullPath: '/sitemap.xml'
       preLoaderRoute: typeof SitemapDotxmlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cotacao': {
+      id: '/cotacao'
+      path: '/cotacao'
+      fullPath: '/cotacao'
+      preLoaderRoute: typeof CotacaoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/buscar': {
@@ -122,6 +152,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BuscarRoute: BuscarRoute,
+  CotacaoRoute: CotacaoRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   SobreRoute: SobreRoute,
   ApiOcrRoute: ApiOcrRoute,
