@@ -25,7 +25,7 @@ export interface PriceResult {
   situacao?: string;
   numero?: string;
   ano?: string;
-  origem: "PNCP" | "Compras.gov.br" | "Transparência" | "Outro";
+  origem: string;
   documento?: "edital" | "ata" | "contrato" | "outro";
   url?: string;
   homologado: boolean;
