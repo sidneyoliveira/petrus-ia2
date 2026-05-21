@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import type { PriceResult, SearchResponse } from "./types";
+import type { PriceResult, SearchResponse, SearchSourceStatus } from "./types";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 const FilterSchema = z.object({
@@ -325,22 +325,28 @@ async function fetchPncpItens(
   // A rota antiga /api/consulta/v1 não responde de forma confiável e fazia o sistema manter
   // o processo inteiro como fallback, exatamente o comportamento incorreto reportado.
   const seq = String(Number(String(sequencial).replace(/\D/g, "")) || sequencial);
-  const url = `https://pncp.gov.br/pncp-api/v1/orgaos/${cnpj}/compras/${ano}/${seq}/itens?pagina=1&tamanhoPagina=50`;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 12_000);
-  try {
-    const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
-      signal: ctrl.signal,
-    });
-    if (!res.ok) return [];
-    const j = (await res.json()) as PncpItemRaw[] | { data?: PncpItemRaw[] };
-    return Array.isArray(j) ? j : (j.data ?? []);
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timer);
+  const all: PncpItemRaw[] = [];
+  for (let pagina = 1; pagina <= 5; pagina++) {
+    const url = `https://pncp.gov.br/pncp-api/v1/orgaos/${cnpj}/compras/${ano}/${seq}/itens?pagina=${pagina}&tamanhoPagina=100`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12_000);
+    try {
+      const res = await fetch(url, {
+        headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+        signal: ctrl.signal,
+      });
+      if (!res.ok) break;
+      const j = (await res.json()) as PncpItemRaw[] | { data?: PncpItemRaw[] };
+      const page = Array.isArray(j) ? j : (j.data ?? []);
+      all.push(...page);
+      if (page.length < 100) break;
+    } catch {
+      break;
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  return all;
 }
 
 /**
