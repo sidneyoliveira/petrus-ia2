@@ -4,8 +4,17 @@ export interface PriceResult {
   subtitulo?: string;
   descricao: string;
   unidade?: string;
+  quantidade?: number | null;
   valor?: number | null;
   valorTotal?: number | null;
+  /**
+   * Procedência do `valor` exibido:
+   * - "unitario_homologado": valor unitário homologado do item (ideal)
+   * - "unitario_estimado": valor unitário estimado do item
+   * - "global": valor TOTAL do processo (não unitário — pouco confiável p/ cotação)
+   * - "desconhecido": campo de valor sem contexto claro
+   */
+  valorTipo?: "unitario_homologado" | "unitario_estimado" | "global" | "desconhecido";
   fornecedor?: string;
   cnpj?: string;
   orgao?: string;

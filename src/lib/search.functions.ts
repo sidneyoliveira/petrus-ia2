@@ -115,6 +115,7 @@ interface RawItem {
   valor_homologado?: number;
   valor_unitario?: number;
   unidade_medida?: string;
+  quantidade?: number;
   orgao_nome?: string;
   orgao_cnpj?: string;
   unidade_nome?: string;
@@ -128,6 +129,8 @@ interface RawItem {
   tipo_documento?: string;
   item_url?: string;
   url?: string;
+  /** Marca explicitamente o tipo do valor (preenchido pelo enrichWithPNCPItems). */
+  _valorTipo?: PriceResult["valorTipo"];
   [k: string]: unknown;
 }
 
@@ -148,6 +151,132 @@ async function fetchPNCP(query: string, pagina: number): Promise<RawItem[]> {
     console.error("PNCP fetch error", e);
     return [];
   }
+}
+
+// PNCP API de consulta — retorna ITENS individuais de uma contratação/ata/contrato,
+// cada um com valor UNITÁRIO (estimado e/ou homologado), unidade e quantidade.
+// Isto resolve o problema do "valor global do processo" aparecer como cotação.
+interface PncpItemRaw {
+  numeroItem?: number;
+  descricao?: string;
+  unidadeMedida?: string;
+  quantidade?: number;
+  valorUnitarioEstimado?: number;
+  valorUnitarioHomologado?: number;
+  valorTotal?: number;
+  valorTotalHomologado?: number;
+  situacaoCompraItemNome?: string;
+  ncmNbsCodigo?: string;
+}
+
+async function fetchPncpItens(
+  cnpj: string,
+  ano: string | number,
+  sequencial: string | number,
+  tipo: string,
+): Promise<PncpItemRaw[]> {
+  // tipo: "edital"/"compra" -> /compras/, "ata" -> /atas/, "contrato" -> /contratos/
+  const seg = /ata/i.test(tipo) ? "atas" : /contrato/i.test(tipo) ? "contratos" : "compras";
+  const url = `https://pncp.gov.br/api/consulta/v1/orgaos/${cnpj}/${seg}/${ano}/${sequencial}/itens?pagina=1&tamanhoPagina=50`;
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+    });
+    if (!res.ok) return [];
+    const j = (await res.json()) as PncpItemRaw[] | { data?: PncpItemRaw[] };
+    return Array.isArray(j) ? j : (j.data ?? []);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Para cada resultado PNCP (que representa um PROCESSO inteiro), tenta buscar
+ * os ITENS individuais e EXPANDIR em múltiplos RawItem — cada item com seu
+ * próprio valor unitário, unidade, quantidade e descrição.
+ *
+ * Limitado aos top-N por custo. Resultados sem cnpj/ano/sequencial ficam como estão.
+ */
+async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): Promise<RawItem[]> {
+  const qLower = query.toLowerCase();
+  const qTokens = qLower.split(/\s+/).filter((t) => t.length > 2);
+  const enrichable: RawItem[] = [];
+  const passthrough: RawItem[] = [];
+  for (const r of raw) {
+    const cnpj = (r.orgao_cnpj ?? "").replace(/\D/g, "");
+    const ano = r.ano;
+    const seq = r.numero ? String(r.numero).replace(/\D/g, "") : "";
+    const isPNCP = !r._source || r._source === "PNCP" || r._source === "Transparência" || r._source === "Compras.gov.br";
+    if (isPNCP && cnpj.length === 14 && ano && seq && enrichable.length < limit) {
+      enrichable.push(r);
+    } else {
+      passthrough.push(r);
+    }
+  }
+
+  const fetched = await Promise.allSettled(
+    enrichable.map((r) =>
+      fetchPncpItens(
+        (r.orgao_cnpj ?? "").replace(/\D/g, ""),
+        r.ano!,
+        String(r.numero).replace(/\D/g, ""),
+        String(r.tipo_documento ?? ""),
+      ).then((items) => ({ parent: r, items })),
+    ),
+  );
+
+  const expanded: RawItem[] = [];
+  for (const s of fetched) {
+    if (s.status !== "fulfilled") continue;
+    const { parent, items } = s.value;
+    if (!items || items.length === 0) {
+      // Sem itens — mantém o processo, mas marca valor como GLOBAL
+      expanded.push({ ...parent, _valorTipo: "global" });
+      continue;
+    }
+    // Filtra itens cuja descrição tem ao menos 1 token da consulta
+    const relevant = items.filter((it) => {
+      const d = (it.descricao ?? "").toLowerCase();
+      if (!d) return false;
+      if (qTokens.length === 0) return true;
+      return qTokens.some((t) => d.includes(t));
+    });
+    const useItems = relevant.length > 0 ? relevant : items.slice(0, 3);
+    for (const it of useItems) {
+      const unit = it.valorUnitarioHomologado ?? it.valorUnitarioEstimado;
+      const tipoVal: PriceResult["valorTipo"] = it.valorUnitarioHomologado
+        ? "unitario_homologado"
+        : it.valorUnitarioEstimado
+          ? "unitario_estimado"
+          : "desconhecido";
+      expanded.push({
+        ...parent,
+        id: `${parent.id ?? `${parent.orgao_cnpj}-${parent.ano}-${parent.numero}`}-it${it.numeroItem ?? Math.random().toString(36).slice(2, 6)}`,
+        objeto_compra: it.descricao ?? parent.objeto_compra,
+        descricao: it.descricao ?? parent.descricao,
+        valor_unitario_homologado: it.valorUnitarioHomologado,
+        valor_unitario_estimado: it.valorUnitarioEstimado,
+        valor_unitario: unit,
+        unidade_medida: it.unidadeMedida ?? parent.unidade_medida,
+        quantidade: it.quantidade,
+        situacao: it.situacaoCompraItemNome ?? parent.situacao,
+        _valorTipo: tipoVal,
+      });
+    }
+  }
+
+  // Marca passthrough como GLOBAL quando o valor presente é claramente do processo todo
+  const marked = passthrough.map((r) => {
+    if (r._valorTipo) return r;
+    const hasUnit = typeof r.valor_unitario_homologado === "number" || typeof r.valor_unitario_estimado === "number" || typeof r.valor_unitario === "number";
+    if (hasUnit) return { ...r, _valorTipo: "unitario_estimado" as const };
+    if (typeof r.valor_global === "number" || typeof r.valorTotalEstimado === "number") {
+      return { ...r, _valorTipo: "global" as const };
+    }
+    return r;
+  });
+
+  return [...expanded, ...marked];
 }
 
 // Compras.gov.br — endpoint público de contratos (Dados Abertos)
@@ -375,14 +504,32 @@ function toResult(raw: RawItem): PriceResult {
         : "outro";
   const id = String(raw.id ?? `${raw.numero ?? ""}-${raw.ano ?? ""}-${Math.random().toString(36).slice(2, 8)}`);
 
+  // Tipo de valor — preferência ao já marcado pelo enrich
+  const valorTipo: PriceResult["valorTipo"] =
+    raw._valorTipo ??
+    (typeof raw.valor_unitario_homologado === "number"
+      ? "unitario_homologado"
+      : typeof raw.valor_unitario_estimado === "number" || typeof raw.valor_unitario === "number"
+        ? "unitario_estimado"
+        : typeof raw.valor_global === "number" || typeof raw.valorTotalEstimado === "number"
+          ? "global"
+          : "desconhecido");
+
   return {
     id,
     titulo: String(titulo),
     subtitulo,
     descricao: String(descricao),
     unidade: raw.unidade_medida,
+    quantidade: typeof raw.quantidade === "number" ? raw.quantidade : null,
     valor,
-    valorTotal: valor,
+    valorTotal:
+      typeof raw.valor_global === "number"
+        ? raw.valor_global
+        : typeof raw.valorTotalEstimado === "number"
+          ? raw.valorTotalEstimado
+          : valor,
+    valorTipo,
     fornecedor: undefined,
     orgao: raw.orgao_nome,
     cnpj: raw.orgao_cnpj,
@@ -454,8 +601,23 @@ export const searchPrices = createServerFn({ method: "POST" })
     const tceDomains = catalog.filter((s) => s.domain.startsWith("tce.")).map((s) => s.domain);
     if (tceDomains.length > 0) tasks.push(fetchFirecrawlWeb(data.query, tceDomains));
     const settled = await Promise.allSettled(tasks);
-    const raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+    let raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+
+    // 2b) Enriquece com ITENS individuais do PNCP para ter valor unitário real
+    // (a busca do PNCP só devolve processos inteiros — sem isto, o "valor" exibido
+    // acaba sendo o total do lote).
+    raw = await enrichWithPNCPItems(raw, data.query, 12);
+
     let results = raw.map(toResult);
+
+    // Descarta resultados com valor claramente do processo todo quando exceder
+    // um teto razoável para um único item (heurística: > R$ 500.000 sem unidade).
+    results = results.filter((r) => {
+      if (r.valorTipo !== "global") return true;
+      if (typeof r.valor !== "number") return true;
+      if (r.valor > 500_000 && !r.unidade) return false;
+      return true;
+    });
 
     // Auto-descoberta: registra novos domínios encontrados pelo Firecrawl
     void registerDiscoveredDomains(

@@ -137,6 +137,24 @@ function Buscar() {
     return arr;
   }, [data, filters, sortBy]);
 
+  // Estatísticas — apenas valores UNITÁRIOS confiáveis, com remoção de outliers (IQR)
+  const stats = useMemo(() => {
+    const vals = filtered
+      .filter((r) => r.valorTipo === "unitario_homologado" || r.valorTipo === "unitario_estimado")
+      .map((r) => r.valor!)
+      .filter((v): v is number => typeof v === "number" && v > 0)
+      .sort((a, b) => a - b);
+    if (vals.length === 0) return null;
+    const q = (p: number) => vals[Math.min(vals.length - 1, Math.floor(p * (vals.length - 1)))];
+    const q1 = q(0.25); const q3 = q(0.75); const iqr = q3 - q1;
+    const lo = q1 - 1.5 * iqr; const hi = q3 + 1.5 * iqr;
+    const clean = vals.filter((v) => v >= lo && v <= hi);
+    const base = clean.length >= 3 ? clean : vals;
+    const mean = base.reduce((s, v) => s + v, 0) / base.length;
+    const median = base[Math.floor(base.length / 2)];
+    return { n: base.length, removidos: vals.length - base.length, mean, median, min: base[0], max: base[base.length - 1] };
+  }, [filtered]);
+
   // Infinite scroll
   useEffect(() => {
     if (!sentinelRef.current) return;
@@ -396,6 +414,15 @@ function Buscar() {
 
             {filtered.length > 0 && (
               <>
+                {stats && (
+                  <div className="mb-4 grid grid-cols-2 md:grid-cols-5 gap-2 rounded-xl border border-border bg-card p-3">
+                    <Stat label="Cotações válidas" value={String(stats.n)} hint={stats.removidos ? `${stats.removidos} outliers removidos` : "IN 65/2021"} />
+                    <Stat label="Média" value={brl(stats.mean)} accent />
+                    <Stat label="Mediana" value={brl(stats.median)} />
+                    <Stat label="Mínimo" value={brl(stats.min)} />
+                    <Stat label="Máximo" value={brl(stats.max)} />
+                  </div>
+                )}
                 <div className="flex flex-col gap-3">
                   {filtered.slice(0, visible).map((it) => (
                     <ResultCard
@@ -453,6 +480,20 @@ function ResultsSkeleton() {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function brl(v: number) {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
+}
+
+function Stat({ label, value, hint, accent }: { label: string; value: string; hint?: string; accent?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className={`text-base font-semibold tabular-nums truncate ${accent ? "text-accent" : ""}`} title={value}>{value}</div>
+      {hint && <div className="text-[10px] text-muted-foreground truncate" title={hint}>{hint}</div>}
     </div>
   );
 }
