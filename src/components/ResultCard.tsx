@@ -1,4 +1,4 @@
-import { Award, Building2, Calendar, MapPin, Tag, ExternalLink, Bookmark, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Award, Building2, Calendar, MapPin, Tag, ExternalLink, Bookmark, ThumbsUp, ThumbsDown, AlertTriangle } from "lucide-react";
 import type { PriceResult } from "@/lib/types";
 import { useServerFn } from "@tanstack/react-start";
 import { submitFeedback } from "@/lib/feedback.functions";
@@ -7,6 +7,14 @@ import { useState } from "react";
 function brl(v?: number | null) {
   if (typeof v !== "number") return "—";
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
+}
+function valorBadge(t?: PriceResult["valorTipo"]) {
+  switch (t) {
+    case "unitario_homologado": return { label: "unit. homologado", tone: "bg-success/15 text-success" };
+    case "unitario_estimado":   return { label: "unit. estimado",   tone: "bg-primary/10 text-primary" };
+    case "global":              return { label: "TOTAL do processo", tone: "bg-destructive/15 text-destructive" };
+    default:                    return { label: "valor s/ contexto", tone: "bg-muted text-muted-foreground" };
+  }
 }
 function fmtDate(d?: string) {
   if (!d) return "—";
@@ -139,8 +147,23 @@ export function ResultCard({ item, onOpen, onSave, saved, query }: Props) {
         <div className="border-t md:border-t-0 md:border-l border-border/60 bg-secondary/20 md:w-[240px] shrink-0 p-4 md:p-5 flex flex-col justify-center gap-3">
           <div className="flex items-baseline justify-between gap-4">
             <div>
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Valor</div>
-              <div className="text-xl font-semibold tabular-nums">{brl(item.valor)}</div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                Valor
+                {item.valorTipo === "global" && (
+                  <AlertTriangle className="h-3 w-3 text-destructive" />
+                )}
+              </div>
+              <div className={`text-xl font-semibold tabular-nums ${item.valorTipo === "global" ? "text-muted-foreground line-through decoration-destructive/60" : ""}`}>
+                {brl(item.valor)}
+              </div>
+              <div className={`mt-0.5 inline-flex rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider ${valorBadge(item.valorTipo).tone}`}>
+                {valorBadge(item.valorTipo).label}
+              </div>
+              {typeof item.quantidade === "number" && (
+                <div className="text-[10px] text-muted-foreground mt-0.5 tabular-nums">
+                  Qtd: {item.quantidade}{item.unidade ? ` ${item.unidade}` : ""}
+                </div>
+              )}
             </div>
             <div className="text-right">
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Compat.</div>
