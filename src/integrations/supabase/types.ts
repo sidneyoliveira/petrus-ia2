@@ -14,6 +14,57 @@ export type Database = {
   }
   public: {
     Tables: {
+      price_sources: {
+        Row: {
+          category: string
+          created_at: string
+          discovered_auto: boolean
+          domain: string
+          enabled: boolean
+          hits: number
+          id: string
+          inciso: string | null
+          last_used_at: string | null
+          name: string
+          notes: string | null
+          priority: number
+          successes: number
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          discovered_auto?: boolean
+          domain: string
+          enabled?: boolean
+          hits?: number
+          id?: string
+          inciso?: string | null
+          last_used_at?: string | null
+          name: string
+          notes?: string | null
+          priority?: number
+          successes?: number
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          discovered_auto?: boolean
+          domain?: string
+          enabled?: boolean
+          hits?: number
+          id?: string
+          inciso?: string | null
+          last_used_at?: string | null
+          name?: string
+          notes?: string | null
+          priority?: number
+          successes?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       search_feedback: {
         Row: {
           action: string

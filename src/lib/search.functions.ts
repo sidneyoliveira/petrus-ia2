@@ -13,6 +13,8 @@ const FilterSchema = z.object({
   valorMin: z.number().optional(),
   valorMax: z.number().optional(),
   pagina: z.number().int().min(1).max(50).optional(),
+  keywords: z.array(z.string().min(1).max(60)).max(20).optional(),
+  mode: z.enum(["semantic", "exact", "all_keywords"]).optional(),
 });
 
 const FORBIDDEN = [
@@ -23,6 +25,21 @@ const FORBIDDEN = [
   "olx",
   "facebook",
 ];
+
+// Heurística para detectar resultados que misturam múltiplos itens distintos
+// (ex.: "CALÇA COM ELÁSTICO, CALÇA SEM ELÁSTICO"). Resultados assim viram lote
+// e não servem para cotação unitária — devem ser filtrados.
+function looksLikeMultiItem(text: string): boolean {
+  const t = text.toLowerCase();
+  // separadores explícitos de listagem
+  const seps = (t.match(/[;\/]|(?:^|\s)e\s|\bcom\s+e\s+sem\b|,\s*[a-z]{4,}/g) ?? []).length;
+  if (seps >= 2) return true;
+  // "item 01", "item 02"
+  if (/item\s*\d+.*item\s*\d+/i.test(text)) return true;
+  // múltiplos preços no mesmo título indica lote
+  if ((t.match(/r\$\s*\d/g) ?? []).length >= 2) return true;
+  return false;
+}
 
 function tokenize(s: string): string[] {
   return (s || "")
@@ -93,6 +110,10 @@ interface RawItem {
   valor_global?: number;
   valorTotalEstimado?: number;
   valor_estimado?: number;
+  valor_unitario_estimado?: number;
+  valor_unitario_homologado?: number;
+  valor_homologado?: number;
+  valor_unitario?: number;
   unidade_medida?: string;
   orgao_nome?: string;
   orgao_cnpj?: string;
@@ -209,10 +230,15 @@ async function expandQuery(query: string, apiKey: string | undefined): Promise<s
 
 // Busca aberta via Firecrawl em portais oficiais .gov.br (quando o conector estiver ativo).
 // Caso FIRECRAWL_API_KEY não esteja configurada, retorna [] silenciosamente.
-async function fetchFirecrawlWeb(query: string): Promise<RawItem[]> {
+async function fetchFirecrawlWeb(query: string, siteFilters: string[]): Promise<RawItem[]> {
   const key = process.env.FIRECRAWL_API_KEY;
   if (!key) return [];
-  const q = `${query} (contrato OR ata OR pregão OR licitação) site:gov.br`;
+  // Constrói consulta com OR de domínios priorizados pelo catálogo (price_sources)
+  const sites =
+    siteFilters.length > 0
+      ? `(${siteFilters.slice(0, 8).map((d) => `site:${d}`).join(" OR ")})`
+      : "site:gov.br";
+  const q = `${query} (contrato OR ata OR pregão OR licitação OR homologação) ${sites}`;
   try {
     const res = await fetch("https://api.firecrawl.dev/v2/search", {
       method: "POST",
@@ -220,7 +246,7 @@ async function fetchFirecrawlWeb(query: string): Promise<RawItem[]> {
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ query: q, limit: 15, lang: "pt", country: "br" }),
+      body: JSON.stringify({ query: q, limit: 20, lang: "pt", country: "br" }),
     });
     if (!res.ok) {
       console.warn("Firecrawl search HTTP", res.status);
@@ -228,8 +254,11 @@ async function fetchFirecrawlWeb(query: string): Promise<RawItem[]> {
     }
     const json = (await res.json()) as {
       data?: { web?: Array<{ url?: string; title?: string; description?: string }> } | Array<{ url?: string; title?: string; description?: string }>;
+      web?: Array<{ url?: string; title?: string; description?: string }>;
     };
-    const arr = Array.isArray(json.data) ? json.data : (json.data?.web ?? []);
+    const arr = Array.isArray(json.data)
+      ? json.data
+      : (json.data?.web ?? json.web ?? []);
     return arr.map((r, i): RawItem => ({
       id: `fc-${i}-${(r.url ?? "").slice(-40)}`,
       title: r.title ?? r.url ?? "Resultado web",
@@ -241,6 +270,51 @@ async function fetchFirecrawlWeb(query: string): Promise<RawItem[]> {
   } catch (e) {
     console.warn("Firecrawl error", (e as Error).message);
     return [];
+  }
+}
+
+// Lê catálogo de fontes (price_sources) ordenado por prioridade e taxa de sucesso.
+async function loadActiveSources(): Promise<{ domain: string; name: string }[]> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("price_sources")
+      .select("domain, name, priority, hits, successes")
+      .eq("enabled", true)
+      .order("priority", { ascending: false })
+      .limit(60);
+    if (error || !data) return [];
+    return data.map((d) => ({ domain: d.domain, name: d.name }));
+  } catch {
+    return [];
+  }
+}
+
+// Descobre novos domínios .gov.br a partir das URLs retornadas e os salva no catálogo.
+async function registerDiscoveredDomains(urls: string[], known: Set<string>) {
+  const news = new Map<string, string>();
+  for (const u of urls) {
+    if (!u) continue;
+    try {
+      const host = new URL(u).hostname.replace(/^www\./, "");
+      if (!host.endsWith(".gov.br") && !host.endsWith(".org.br") && !host.endsWith(".com.br")) continue;
+      if (known.has(host)) continue;
+      news.set(host, host);
+      if (news.size >= 5) break;
+    } catch { /* ignore */ }
+  }
+  if (news.size === 0) return;
+  try {
+    const rows = Array.from(news.values()).map((d) => ({
+      name: d,
+      domain: d,
+      category: d.endsWith(".gov.br") ? "auto-gov" : "auto",
+      inciso: "III",
+      priority: 30,
+      discovered_auto: true,
+    }));
+    await supabaseAdmin.from("price_sources").upsert(rows, { onConflict: "domain", ignoreDuplicates: true });
+  } catch (e) {
+    console.warn("registerDiscoveredDomains failed", (e as Error).message);
   }
 }
 
@@ -271,14 +345,23 @@ function toResult(raw: RawItem): PriceResult {
   const titulo = objeto || processo || "Sem título";
   const subtitulo = objeto && processo && objeto !== processo ? processo : undefined;
   const descricao = raw.description || raw.descricao || raw.objeto_compra || titulo;
+  // Prioriza valor UNITÁRIO/HOMOLOGADO do item sobre valor total do processo
   const valor =
-    typeof raw.valor_global === "number"
-      ? raw.valor_global
-      : typeof raw.valor_estimado === "number"
-        ? raw.valor_estimado
-        : typeof raw.valorTotalEstimado === "number"
-          ? raw.valorTotalEstimado
-          : null;
+    typeof raw.valor_unitario_homologado === "number"
+      ? raw.valor_unitario_homologado
+      : typeof raw.valor_unitario_estimado === "number"
+        ? raw.valor_unitario_estimado
+        : typeof raw.valor_unitario === "number"
+          ? raw.valor_unitario
+          : typeof raw.valor_homologado === "number"
+            ? raw.valor_homologado
+            : typeof raw.valor_estimado === "number"
+              ? raw.valor_estimado
+              : typeof raw.valor_global === "number"
+                ? raw.valor_global
+                : typeof raw.valorTotalEstimado === "number"
+                  ? raw.valorTotalEstimado
+                  : null;
   const data = raw.data_publicacao_pncp || raw.data || "";
   const situacao = (raw.situacao_nome || raw.situacao || "").toString();
   const homologado = /homologad|adjudicad|conclu/i.test(situacao) || (raw.tipo_documento || "").includes("ata");
@@ -348,7 +431,16 @@ export const searchPrices = createServerFn({ method: "POST" })
     const ultimosMeses = data.ultimosMeses ?? 12;
 
     // 1) Expansão inteligente da consulta (sinônimos via IA)
-    const variants = await expandQuery(data.query, apiKey);
+    const mode = data.mode ?? "semantic";
+    const variants =
+      mode === "exact"
+        ? [data.query]
+        : await expandQuery(data.query, apiKey);
+
+    // 1b) Catálogo dinâmico de fontes para Firecrawl
+    const catalog = await loadActiveSources();
+    const knownDomains = new Set(catalog.map((s) => s.domain));
+    const siteFilters = catalog.map((s) => s.domain);
 
     // 2) Busca paralela em múltiplas fontes oficiais + variações + Firecrawl (se habilitado)
     const tasks: Promise<RawItem[]>[] = [];
@@ -357,10 +449,43 @@ export const searchPrices = createServerFn({ method: "POST" })
       tasks.push(fetchComprasGov(v));
       tasks.push(fetchTransparencia(v));
     }
-    tasks.push(fetchFirecrawlWeb(data.query));
+    tasks.push(fetchFirecrawlWeb(data.query, siteFilters));
+    // chama Firecrawl 2x — uma com filtros gov.br federal, outra com TCEs
+    const tceDomains = catalog.filter((s) => s.domain.startsWith("tce.")).map((s) => s.domain);
+    if (tceDomains.length > 0) tasks.push(fetchFirecrawlWeb(data.query, tceDomains));
     const settled = await Promise.allSettled(tasks);
     const raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
     let results = raw.map(toResult);
+
+    // Auto-descoberta: registra novos domínios encontrados pelo Firecrawl
+    void registerDiscoveredDomains(
+      results.map((r) => r.url ?? "").filter(Boolean),
+      knownDomains,
+    );
+
+    // Filtra resultados que misturam vários itens distintos no mesmo registro
+    results = results.filter((r) => !looksLikeMultiItem(`${r.titulo} ${r.descricao}`));
+
+    // Filtro por palavras-chave obrigatórias
+    if (data.keywords && data.keywords.length > 0) {
+      const kws = data.keywords.map((k) => k.toLowerCase());
+      results = results.filter((r) => {
+        const blob = `${r.titulo} ${r.descricao}`.toLowerCase();
+        return kws.every((k) => blob.includes(k));
+      });
+    }
+
+    // Filtro modo exato — todos os tokens do título devem aparecer
+    if (mode === "exact" || mode === "all_keywords") {
+      const need = tokenize(data.query);
+      if (need.length > 0) {
+        results = results.filter((r) => {
+          const blob = tokenize(`${r.titulo} ${r.descricao}`);
+          const set = new Set(blob);
+          return need.every((t) => set.has(t));
+        });
+      }
+    }
 
     // Deduplicação cruzada por URL/título
     const seen = new Set<string>();

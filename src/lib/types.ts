@@ -39,6 +39,8 @@ export interface SearchFilters {
   pagina?: number;
 }
 
+export type SearchMode = "semantic" | "exact" | "all_keywords";
+
 export interface SearchResponse {
   results: PriceResult[];
   total: number;

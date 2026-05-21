@@ -33,6 +33,8 @@ function Buscar() {
   const navigate = useNavigate();
   const { q } = Route.useSearch();
   const [input, setInput] = useState(q);
+  const [keywordsInput, setKeywordsInput] = useState("");
+  const [mode, setMode] = useState<"semantic" | "exact" | "all_keywords">("semantic");
   const [filters, setFilters] = useState({
     uf: "" as string,
     modalidade: "",
@@ -63,13 +65,28 @@ function Buscar() {
     return () => clearTimeout(t);
   }, [input, q, navigate]);
 
+  const parsedKeywords = useMemo(
+    () =>
+      keywordsInput
+        .split(",")
+        .map((k) => k.trim())
+        .filter((k) => k.length > 0)
+        .slice(0, 20),
+    [keywordsInput],
+  );
+
   const { data, isFetching, error, refetch } = useQuery({
-    queryKey: ["search", q],
+    queryKey: ["search", q, mode, parsedKeywords.join("|")],
     enabled: q.trim().length >= 2,
     staleTime: 60_000,
     queryFn: () =>
       callSearch({
-        data: { query: q.trim(), pagina: 1 },
+        data: {
+          query: q.trim(),
+          pagina: 1,
+          mode,
+          keywords: parsedKeywords.length ? parsedKeywords : undefined,
+        },
       }),
   });
 
@@ -146,7 +163,7 @@ function Buscar() {
       <main className="flex-1">
         {/* Search bar */}
         <section className="border-b border-border/60 bg-card/40">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 py-5">
+          <div className="mx-auto max-w-none px-4 sm:px-6 py-5">
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -196,7 +213,7 @@ function Buscar() {
           </div>
         </section>
 
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8 grid lg:grid-cols-[260px_1fr] gap-8">
+        <div className="mx-auto max-w-none px-4 sm:px-6 py-8 grid lg:grid-cols-[260px_1fr] gap-8">
           {/* Filters */}
           <aside className="space-y-6">
             <div className="rounded-xl border border-border bg-card p-5 shadow-card sticky top-20">
@@ -216,6 +233,30 @@ function Buscar() {
                   <option value="valorDesc">Maior valor</option>
                   <option value="dataRecente">Mais recentes</option>
                 </select>
+              </div>
+
+              <div className="mb-5">
+                <label className="text-xs text-muted-foreground mb-1.5 block">Tipo de pesquisa</label>
+                <select
+                  value={mode}
+                  onChange={(e) => setMode(e.target.value as typeof mode)}
+                  className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="semantic">Semelhante (IA + sinônimos)</option>
+                  <option value="all_keywords">Todas as palavras do título</option>
+                  <option value="exact">Exata (sem expansão)</option>
+                </select>
+              </div>
+
+              <div className="mb-5">
+                <label className="text-xs text-muted-foreground mb-1.5 block">Palavras-chave obrigatórias</label>
+                <input
+                  value={keywordsInput}
+                  onChange={(e) => setKeywordsInput(e.target.value)}
+                  placeholder="ex.: juvenil, unissex, elástico"
+                  className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+                />
+                <div className="text-[10px] text-muted-foreground mt-1">Separe por vírgula. Todas devem aparecer no item.</div>
               </div>
 
               <div className="flex items-center gap-2 mb-4">

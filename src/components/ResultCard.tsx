@@ -1,6 +1,5 @@
 import { Award, Building2, Calendar, MapPin, Tag, ExternalLink, Bookmark, ThumbsUp, ThumbsDown } from "lucide-react";
 import type { PriceResult } from "@/lib/types";
-import { ScoreBar } from "./ScoreBar";
 import { useServerFn } from "@tanstack/react-start";
 import { submitFeedback } from "@/lib/feedback.functions";
 import { useState } from "react";
@@ -137,22 +136,16 @@ export function ResultCard({ item, onOpen, onSave, saved, query }: Props) {
         </div>
 
         {/* Bloco lateral: valor + compatibilidade + scores compactos */}
-        <div className="border-t md:border-t-0 md:border-l border-border/60 bg-secondary/20 md:w-[320px] shrink-0 p-4 md:p-5 flex flex-col gap-3">
-          <div className="flex items-baseline justify-between gap-3">
+        <div className="border-t md:border-t-0 md:border-l border-border/60 bg-secondary/20 md:w-[240px] shrink-0 p-4 md:p-5 flex flex-col justify-center gap-3">
+          <div className="flex items-baseline justify-between gap-4">
             <div>
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Valor</div>
-              <div className="text-lg font-semibold tabular-nums">{brl(item.valor)}</div>
+              <div className="text-xl font-semibold tabular-nums">{brl(item.valor)}</div>
             </div>
             <div className="text-right">
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Compat.</div>
-              <div className="text-lg font-bold text-accent tabular-nums">{Math.round(item.scoreFinal * 100)}%</div>
+              <div className="text-xl font-bold text-accent tabular-nums">{Math.round(item.scoreFinal * 100)}%</div>
             </div>
-          </div>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
-            <ScoreBar label="Sem." value={item.scoreSemantico} tone="accent" />
-            <ScoreBar label="Jur." value={item.scoreJuridico} tone="primary" />
-            <ScoreBar label="Txt." value={item.scoreTextual} tone="primary" />
-            <ScoreBar label="Téc." value={item.scoreTecnico} tone="success" />
           </div>
         </div>
       </div>
