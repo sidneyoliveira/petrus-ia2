@@ -1,9 +1,10 @@
-import { X, ExternalLink, Award, FileSearch, Loader2, Sparkles, CheckCircle2, AlertTriangle, MinusCircle } from "lucide-react";
+import { X, ExternalLink, Award, FileSearch, Loader2, Sparkles, CheckCircle2, AlertTriangle, MinusCircle, Highlighter } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import type { PriceResult } from "@/lib/types";
 import { ScoreBar } from "./ScoreBar";
 import { extractItemsFromDocument, type ExtractResponse } from "@/lib/extract.functions";
+import { buildHighlightUrl } from "@/lib/highlight-source";
 
 function brl(v?: number | null) {
   if (typeof v !== "number") return "—";
@@ -180,6 +181,18 @@ export function ResultModal({ item, onClose }: Props) {
                   >
                     Abrir fonte original <ExternalLink className="h-3.5 w-3.5" />
                   </a>
+                  {(item.sourceExcerpt || item.descricao) && (
+                    <a
+                      href={buildHighlightUrl(item.url, item.sourceExcerpt ?? item.descricao)}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      title="Abre o documento e tenta destacar o trecho exato que motivou esta cotação"
+                      className="inline-flex items-center gap-2 rounded-md border border-gold/40 bg-gold/10 px-3.5 py-1.5 text-xs font-semibold text-gold hover:bg-gold/15 transition-smooth"
+                    >
+                      <Highlighter className="h-3.5 w-3.5" />
+                      Ver Fonte com Destaque
+                    </a>
+                  )}
                   <button
                     onClick={runAi}
                     disabled={aiLoading}
