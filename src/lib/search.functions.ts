@@ -827,6 +827,9 @@ export const searchPrices = createServerFn({ method: "POST" })
       .filter((s) => /(^|\.)gov\.br$/.test(s.domain) && !s.domain.startsWith("tce."))
       .map((s) => s.domain);
     for (const v of variants.slice(0, 3)) {
+      // PNCP público via web: encontra páginas de processos e, em seguida,
+      // o enrich transforma essas páginas em ITENS granulares via /itens.
+      tasks.push(fetchFirecrawlWeb(v, ["pncp.gov.br"]));
       tasks.push(fetchFirecrawlWeb(v, siteFilters));
       if (tceDomains.length > 0) tasks.push(fetchFirecrawlWeb(v, tceDomains));
       if (govFederal.length > 0) tasks.push(fetchFirecrawlWeb(v, govFederal));
@@ -903,7 +906,9 @@ export const searchPrices = createServerFn({ method: "POST" })
     // Deduplicação cruzada por URL/título
     const seen = new Set<string>();
     results = results.filter((r) => {
-      const k = (r.url || `${r.origem}|${r.titulo}`).toLowerCase();
+      // Itens diferentes podem pertencer à mesma URL/processo; deduplicar só por URL
+      // apagava os itens 2, 3, 4... e voltava a parecer uma lista de processos.
+      const k = `${r.url || r.origem}|${r.titulo}|${r.valor ?? ""}|${r.quantidade ?? ""}`.toLowerCase();
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
