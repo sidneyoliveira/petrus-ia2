@@ -1334,7 +1334,11 @@ function isGranularItemResult(r: PriceResult): boolean {
   }
   if (isSupplierOrCommercial(r)) return true;
   if (r.valorTipo === "unitario_homologado" || r.valorTipo === "unitario_estimado") return true;
-  return Boolean(r.unidade || r.quantidade || r.valorTotal);
+  // Afrouxa: aceita item se tem qualquer sinal de granularidade — unidade,
+  // quantidade, valor total OU apenas um valor unitário visível com título
+  // que não parece processo (já filtrado acima). Sem isso, itens minerados
+  // de PDF/HTML eram silenciosamente descartados.
+  return Boolean(r.unidade || r.quantidade || r.valorTotal || typeof r.valor === "number");
 }
 
 function summarizeSources(results: PriceResult[], catalog: { domain: string; name: string }[]): SearchSourceStatus[] {
