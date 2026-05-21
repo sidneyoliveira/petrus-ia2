@@ -761,6 +761,37 @@ function buildPncpUrl(raw: RawItem): string | undefined {
   return undefined;
 }
 
+function isSupplierOrCommercial(r: PriceResult): boolean {
+  const source = (r.origem || "").toLowerCase();
+  return Boolean(r.fornecedor) && !/(pncp|compras\.gov|transpar|tce|tribunal|gov\.br)/i.test(source);
+}
+
+function isGranularItemResult(r: PriceResult): boolean {
+  const title = r.titulo || "";
+  if (!title || looksLikeProcessNumberTitle(title) || looksLikeProcessObject(title) || looksLikeRawDocumentText(title)) {
+    return false;
+  }
+  if (isSupplierOrCommercial(r)) return true;
+  if (r.valorTipo === "unitario_homologado" || r.valorTipo === "unitario_estimado") return true;
+  return Boolean(r.unidade || r.quantidade || r.valorTotal);
+}
+
+function summarizeSources(results: PriceResult[], catalog: { domain: string; name: string }[]): SearchSourceStatus[] {
+  const base = ["PNCP", "Compras.gov.br", "TCE-CE", ...catalog.slice(0, 8).map((s) => s.name)];
+  const map = new Map<string, SearchSourceStatus>();
+  for (const name of base) {
+    if (!name) continue;
+    map.set(name, { name, domain: catalog.find((s) => s.name === name)?.domain, total: 0 });
+  }
+  for (const r of results) {
+    const name = r.origem || "Outra fonte";
+    const current = map.get(name) ?? { name, total: 0 };
+    current.total += 1;
+    map.set(name, current);
+  }
+  return Array.from(map.values()).filter((s, i) => s.total > 0 || i < 8).slice(0, 12);
+}
+
 function toResult(raw: RawItem): PriceResult {
   // Título do ITEM (descrição do objeto comprado) tem prioridade ABSOLUTA
   // sobre o nome/número do processo. O PNCP costuma retornar o número da
@@ -864,7 +895,7 @@ function toResult(raw: RawItem): PriceResult {
     situacao,
     numero: raw.numero,
     ano: raw.ano ? String(raw.ano) : undefined,
-    origem: (raw["_source"] as PriceResult["origem"]) || "PNCP",
+    origem: (raw._sourceName || raw["_source"] || "PNCP") as string,
     documento,
     url: buildPncpUrl(raw),
     homologado,
