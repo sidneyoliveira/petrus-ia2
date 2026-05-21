@@ -96,10 +96,10 @@ async function writeCachedSearch(opts: {
           query_norm: opts.query_norm,
           query_raw: opts.query_raw.slice(0, 500),
           filters_hash: opts.filters_hash,
-          filters: opts.filters,
+          filters: asJson(opts.filters),
           total: opts.results.length,
           took_ms: opts.tookMs,
-          sources: opts.sources,
+          sources: asJson(opts.sources),
           computed_at: new Date().toISOString(),
           fresh_until: new Date(Date.now() + CACHE_TTL_MS).toISOString(),
         },
@@ -136,7 +136,7 @@ async function writeCachedSearch(opts: {
       url: r.url ?? null,
       documento: r.documento ?? null,
       score_final: r.scoreFinal ?? null,
-      payload: r as unknown as Record<string, unknown>,
+      payload: asJson(r),
     }));
     for (let i = 0; i < rows.length; i += 200) {
       const chunk = rows.slice(i, i + 200);
