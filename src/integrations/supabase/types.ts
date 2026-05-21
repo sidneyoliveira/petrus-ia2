@@ -135,6 +135,11 @@ export type Database = {
           updated_at: string
           url: string | null
           valor: number | null
+          valor_inferido: number | null
+          valor_inferido_at: string | null
+          valor_inferido_confianca: number | null
+          valor_inferido_reason: string | null
+          valor_inferido_status: string | null
           valor_tipo: string | null
           valor_total: number | null
         }
@@ -165,6 +170,11 @@ export type Database = {
           updated_at?: string
           url?: string | null
           valor?: number | null
+          valor_inferido?: number | null
+          valor_inferido_at?: string | null
+          valor_inferido_confianca?: number | null
+          valor_inferido_reason?: string | null
+          valor_inferido_status?: string | null
           valor_tipo?: string | null
           valor_total?: number | null
         }
@@ -195,6 +205,11 @@ export type Database = {
           updated_at?: string
           url?: string | null
           valor?: number | null
+          valor_inferido?: number | null
+          valor_inferido_at?: string | null
+          valor_inferido_confianca?: number | null
+          valor_inferido_reason?: string | null
+          valor_inferido_status?: string | null
           valor_tipo?: string | null
           valor_total?: number | null
         }
