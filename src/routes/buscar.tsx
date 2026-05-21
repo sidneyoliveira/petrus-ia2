@@ -414,6 +414,15 @@ function Buscar() {
 
             {filtered.length > 0 && (
               <>
+                {stats && (
+                  <div className="mb-4 grid grid-cols-2 md:grid-cols-5 gap-2 rounded-xl border border-border bg-card p-3">
+                    <Stat label="Cotações válidas" value={String(stats.n)} hint={stats.removidos ? `${stats.removidos} outliers removidos` : "IN 65/2021"} />
+                    <Stat label="Média" value={brl(stats.mean)} accent />
+                    <Stat label="Mediana" value={brl(stats.median)} />
+                    <Stat label="Mínimo" value={brl(stats.min)} />
+                    <Stat label="Máximo" value={brl(stats.max)} />
+                  </div>
+                )}
                 <div className="flex flex-col gap-3">
                   {filtered.slice(0, visible).map((it) => (
                     <ResultCard
