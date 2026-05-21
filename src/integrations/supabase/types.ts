@@ -114,6 +114,9 @@ export type Database = {
           data: string | null
           descricao: string | null
           documento: string | null
+          embedding: string | null
+          embedding_at: string | null
+          embedding_status: string | null
           fingerprint: string
           fornecedor: string | null
           homologado: boolean | null
@@ -149,6 +152,9 @@ export type Database = {
           data?: string | null
           descricao?: string | null
           documento?: string | null
+          embedding?: string | null
+          embedding_at?: string | null
+          embedding_status?: string | null
           fingerprint: string
           fornecedor?: string | null
           homologado?: boolean | null
@@ -184,6 +190,9 @@ export type Database = {
           data?: string | null
           descricao?: string | null
           documento?: string | null
+          embedding?: string | null
+          embedding_at?: string | null
+          embedding_status?: string | null
           fingerprint?: string
           fornecedor?: string | null
           homologado?: boolean | null
@@ -339,6 +348,32 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      match_quote_items: {
+        Args: {
+          match_count?: number
+          min_similarity?: number
+          query_embedding: string
+        }
+        Returns: {
+          cnpj: string
+          data: string
+          descricao: string
+          fornecedor: string
+          id: string
+          orgao: string
+          origem: string
+          payload: Json
+          query_norm: string
+          search_id: string
+          similarity: number
+          titulo: string
+          uf: string
+          unidade: string
+          url: string
+          valor: number
+          valor_total: number
+        }[]
+      }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
     }
