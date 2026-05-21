@@ -1,9 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { Search, Loader2, Sparkles, Download, FileText, FileJson, FileSpreadsheet, SlidersHorizontal, AlertCircle } from "lucide-react";
+import { Search, Loader2, Sparkles, Download, FileText, FileJson, FileSpreadsheet, SlidersHorizontal, AlertCircle, Database, RefreshCw } from "lucide-react";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import { ResultCard } from "@/components/ResultCard";
@@ -54,6 +54,7 @@ function Buscar() {
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   const callSearch = useServerFn(searchPrices);
+  const queryClient = useQueryClient();
 
   // Debounce input -> URL q
   useEffect(() => {
@@ -89,6 +90,41 @@ function Buscar() {
         },
       }),
   });
+
+  // Refresh em background quando o resultado vem do cache.
+  // Roda a varredura completa, atualiza o banco e invalida a query
+  // para a UI re-renderizar com os dados frescos.
+  const isCached = !!data?.fromCache;
+  const [refreshing, setRefreshing] = useState(false);
+  useEffect(() => {
+    if (!isCached || q.trim().length < 2) return;
+    let cancelled = false;
+    setRefreshing(true);
+    callSearch({
+      data: {
+        query: q.trim(),
+        pagina: 1,
+        mode,
+        keywords: parsedKeywords.length ? parsedKeywords : undefined,
+        forceRefresh: true,
+      },
+    })
+      .then((fresh) => {
+        if (cancelled) return;
+        queryClient.setQueryData(
+          ["search", q, mode, parsedKeywords.join("|")],
+          fresh,
+        );
+      })
+      .catch((e) => console.warn("background refresh failed", e))
+      .finally(() => {
+        if (!cancelled) setRefreshing(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCached, q, mode, parsedKeywords.join("|")]);
 
   const filtered = useMemo(() => {
     if (!data?.results) return [];
