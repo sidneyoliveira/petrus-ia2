@@ -3,10 +3,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { Search, Loader2, Sparkles, Download, FileText, FileJson, FileSpreadsheet, SlidersHorizontal, AlertCircle, Database, RefreshCw } from "lucide-react";
+import { Search, Loader2, Sparkles, Download, FileText, FileJson, FileSpreadsheet, SlidersHorizontal, AlertCircle, Database, RefreshCw, LayoutGrid, Rows3 } from "lucide-react";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import { ResultCard } from "@/components/ResultCard";
+import { ResultsTable } from "@/components/ResultsTable";
 import { ResultModal } from "@/components/ResultModal";
 import { searchPrices } from "@/lib/search.functions";
 import { exportCSV, exportJSON, exportTXT } from "@/lib/export";
@@ -50,12 +51,15 @@ function Buscar() {
     minScore: 0,
     valorMin: "" as string,
     valorMax: "" as string,
+    hideLixo: true,
+    onlyMathOk: false,
   });
   const [sortBy, setSortBy] = useState<
     "compat" | "semantico" | "juridico" | "valorAsc" | "valorDesc" | "valorMedio" | "dataRecente"
   >("compat");
   const [opened, setOpened] = useState<PriceResult | null>(null);
   const [saved, setSaved] = useState<Set<string>>(new Set());
+  const [view, setView] = useState<"table" | "cards">("table");
   const [visible, setVisible] = useState(12);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
@@ -145,6 +149,8 @@ function Buscar() {
       if (vMin !== null && !Number.isNaN(vMin) && (r.valor ?? -Infinity) < vMin) return false;
       if (vMax !== null && !Number.isNaN(vMax) && (r.valor ?? Infinity) > vMax) return false;
       if (r.scoreFinal * 100 < filters.minScore) return false;
+      if (filters.hideLixo && r.extractionQuality === "lixo") return false;
+      if (filters.onlyMathOk && !(r.mathStatus === "ok" && r.extractionQuality === "tríade_ok")) return false;
       return true;
     });
 
@@ -276,6 +282,22 @@ function Buscar() {
               )}
               {data && filtered.length > 0 && (
                 <div className="flex items-center gap-1">
+                  <div className="mr-2 inline-flex items-center rounded-md border border-border bg-card overflow-hidden">
+                    <button
+                      onClick={() => setView("table")}
+                      title="Tabela facetada"
+                      className={`inline-flex items-center gap-1 px-2 py-1.5 text-xs transition-smooth ${view === "table" ? "bg-accent/15 text-accent" : "hover:bg-secondary text-muted-foreground"}`}
+                    >
+                      <Rows3 className="h-3.5 w-3.5" /> Tabela
+                    </button>
+                    <button
+                      onClick={() => setView("cards")}
+                      title="Cards"
+                      className={`inline-flex items-center gap-1 px-2 py-1.5 text-xs transition-smooth ${view === "cards" ? "bg-accent/15 text-accent" : "hover:bg-secondary text-muted-foreground"}`}
+                    >
+                      <LayoutGrid className="h-3.5 w-3.5" /> Cards
+                    </button>
+                  </div>
                   <button onClick={() => exportCSV(filtered, q)} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs hover:bg-secondary transition-smooth">
                     <FileSpreadsheet className="h-3.5 w-3.5" /> CSV
                   </button>
@@ -427,9 +449,27 @@ function Buscar() {
                   />
                   <span className="text-sm">Apenas com valor</span>
                 </label>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={filters.onlyMathOk}
+                    onChange={(e) => setFilters({ ...filters, onlyMathOk: e.target.checked })}
+                    className="h-4 w-4 rounded border-input accent-accent"
+                  />
+                  <span className="text-sm">Apenas matemática ✓ (Qtd × Unit = Total)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={filters.hideLixo}
+                    onChange={(e) => setFilters({ ...filters, hideLixo: e.target.checked })}
+                    className="h-4 w-4 rounded border-input accent-accent"
+                  />
+                  <span className="text-sm">Ocultar extrações inválidas</span>
+                </label>
 
                 <button
-                  onClick={() => setFilters({ uf: "", modalidade: "", unidade: "", apenasHomologados: false, onlyValor: false, minScore: 0, valorMin: "", valorMax: "" })}
+                  onClick={() => setFilters({ uf: "", modalidade: "", unidade: "", apenasHomologados: false, onlyValor: false, minScore: 0, valorMin: "", valorMax: "", hideLixo: true, onlyMathOk: false })}
                   className="w-full mt-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-secondary transition-smooth"
                 >
                   Limpar filtros
@@ -486,18 +526,27 @@ function Buscar() {
                     <Stat label="Máximo" value={brl(stats.max)} />
                   </div>
                 )}
-                <div className="flex flex-col gap-3">
-                  {filtered.slice(0, visible).map((it) => (
-                    <ResultCard
-                      key={it.id}
-                      item={it}
-                      onOpen={setOpened}
-                      onSave={toggleSave}
-                      saved={saved.has(it.id)}
-                      query={q}
-                    />
-                  ))}
-                </div>
+                {view === "table" ? (
+                  <ResultsTable
+                    items={filtered.slice(0, visible)}
+                    onOpen={setOpened}
+                    onSave={toggleSave}
+                    savedIds={saved}
+                  />
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {filtered.slice(0, visible).map((it) => (
+                      <ResultCard
+                        key={it.id}
+                        item={it}
+                        onOpen={setOpened}
+                        onSave={toggleSave}
+                        saved={saved.has(it.id)}
+                        query={q}
+                      />
+                    ))}
+                  </div>
+                )}
                 {visible < filtered.length && (
                   <div ref={sentinelRef} className="flex items-center justify-center py-10 text-muted-foreground text-sm">
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
