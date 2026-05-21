@@ -684,7 +684,9 @@ async function fetchFirecrawlSuppliers(query: string): Promise<RawItem[]> {
           orgao_nome: host || "Fornecedor",
           valor_unitario: priceNum,
           tipo_documento: "outro",
-          _source: "Outro",
+          _source: host || "Fornecedor",
+          _sourceDomain: host || undefined,
+          _sourceName: host || "Fornecedor",
           _supplier: true,
         } as RawItem;
       });
