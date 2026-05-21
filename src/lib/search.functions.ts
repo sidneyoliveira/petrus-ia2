@@ -714,10 +714,11 @@ export const searchPrices = createServerFn({ method: "POST" })
       return true;
     });
 
-    // 2b) Enriquece com ITENS individuais do PNCP para ter valor unitário real
-    // (a busca do PNCP só devolve processos inteiros — sem isto, o "valor" exibido
-    // acaba sendo o total do lote). Aumentamos o limite para acompanhar o fanout.
-    raw = await enrichWithPNCPItems(raw, data.query, 30);
+    // 2b) Enriquece com ITENS individuais do PNCP para ter valor unitário real.
+    // A busca do PNCP só devolve processos inteiros — sem o /itens o usuário
+    // veria apenas o "objeto do contrato" (descrição do processo todo).
+    // Aumentamos bastante o limite para garantir cobertura por item.
+    raw = await enrichWithPNCPItems(raw, data.query, 120);
 
     let results = raw.map(toResult);
 
@@ -727,12 +728,22 @@ export const searchPrices = createServerFn({ method: "POST" })
       (r) => !(looksLikeRawDocumentText(r.titulo) && looksLikeRawDocumentText(r.descricao)),
     );
 
+    // Descarta resultados onde título/descrição é DESCRIÇÃO DE PROCESSO
+    // (ex.: "O objeto do presente contrato é a compra de impressora...") e o
+    // valor não é unitário — esses são processos, não cotações de item.
+    results = results.filter((r) => {
+      const isProcessText =
+        looksLikeProcessObject(r.titulo) || looksLikeProcessObject(r.descricao);
+      if (!isProcessText) return true;
+      return r.valorTipo === "unitario_homologado" || r.valorTipo === "unitario_estimado";
+    });
+
     // Descarta resultados com valor claramente do processo todo quando exceder
     // um teto razoável para um único item (heurística: > R$ 500.000 sem unidade).
     results = results.filter((r) => {
-      if (r.valorTipo !== "global") return true;
-      if (typeof r.valor !== "number") return true;
-      if (r.valor > 500_000 && !r.unidade) return false;
+      // Hoje só aceitamos valor UNITÁRIO. Global vira ruído — descarta.
+      if (r.valorTipo === "global") return false;
+      if (r.valorTipo === "desconhecido" && typeof r.valor !== "number") return false;
       return true;
     });
 
