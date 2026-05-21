@@ -1560,16 +1560,9 @@ function toResult(raw: RawItem): PriceResult {
         : "outro";
   const id = String(raw.id ?? `${raw.numero ?? ""}-${raw.ano ?? ""}-${Math.random().toString(36).slice(2, 8)}`);
 
-  // Tipo de valor — preferência ao já marcado pelo enrich
-  const valorTipo: PriceResult["valorTipo"] =
-    raw._valorTipo ??
-    (typeof raw.valor_unitario_homologado === "number"
-      ? "unitario_homologado"
-      : typeof raw.valor_unitario_estimado === "number" || typeof raw.valor_unitario === "number"
-        ? "unitario_estimado"
-        : typeof raw.valor_global === "number" || typeof raw.valorTotalEstimado === "number"
-          ? "global"
-          : "desconhecido");
+  // Tipo de valor — preferência ao já marcado pelo enrich, senão usa a
+  // regra pura (safeUnitValue) que já garantiu null no `valor` global.
+  const valorTipo: PriceResult["valorTipo"] = raw._valorTipo ?? safe.valorTipo;
 
   return {
     id,
