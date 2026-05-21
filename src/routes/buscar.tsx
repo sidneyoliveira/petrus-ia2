@@ -1,9 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { Search, Loader2, Sparkles, Download, FileText, FileJson, FileSpreadsheet, SlidersHorizontal, AlertCircle, Database, RefreshCw, LayoutGrid, Rows3 } from "lucide-react";
+import { Search, Loader2, Sparkles, Download, FileText, FileJson, FileSpreadsheet, SlidersHorizontal, AlertCircle, Database, RefreshCw, LayoutGrid, Rows3, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import { ResultCard } from "@/components/ResultCard";
@@ -56,9 +56,25 @@ function Buscar() {
   const [opened, setOpened] = useState<PriceResult | null>(null);
   const [saved, setSaved] = useState<Set<string>>(new Set());
   const basket = useBasket();
-  const [view, setView] = useState<"table" | "cards">("table");
-  const [visible, setVisible] = useState(12);
-  const sentinelRef = useRef<HTMLDivElement>(null);
+  // View padrão = cards (original). Persiste a escolha do usuário no navegador.
+  const [view, setView] = useState<"table" | "cards">(() => {
+    if (typeof window === "undefined") return "cards";
+    const v = window.localStorage.getItem("buscar:view");
+    return v === "table" || v === "cards" ? v : "cards";
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") window.localStorage.setItem("buscar:view", view);
+  }, [view]);
+  // Paginação persistente
+  const [pageSize, setPageSize] = useState<number>(() => {
+    if (typeof window === "undefined") return 20;
+    const n = Number(window.localStorage.getItem("buscar:pageSize"));
+    return [10, 20, 50, 100].includes(n) ? n : 20;
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") window.localStorage.setItem("buscar:pageSize", String(pageSize));
+  }, [pageSize]);
+  const [page, setPage] = useState(1);
 
   const callSearch = useServerFn(searchPrices);
   const queryClient = useQueryClient();
@@ -224,17 +240,13 @@ function Buscar() {
     return { n: base.length, removidos: vals.length - base.length, mean, median, min: base[0], max: base[base.length - 1] };
   }, [filtered]);
 
-  // Infinite scroll
-  useEffect(() => {
-    if (!sentinelRef.current) return;
-    const io = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting) setVisible((v) => Math.min(v + 12, filtered.length));
-    });
-    io.observe(sentinelRef.current);
-    return () => io.disconnect();
-  }, [filtered.length]);
+  // Reset de página quando muda termo/filtros/ordenação/pageSize
+  useEffect(() => setPage(1), [q, filters, sortBy, pageSize]);
 
-  useEffect(() => setVisible(12), [q, filters]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * pageSize;
+  const pageItems = filtered.slice(pageStart, pageStart + pageSize);
 
   const toggleSave = (it: PriceResult) => {
     setSaved((s) => {
@@ -332,9 +344,10 @@ function Buscar() {
                 </div>
               )}
             </div>
-            {(isFetching || data?.sources?.length) && (
-              <SourceStrip loading={isFetching} sources={data?.sources} />
-            )}
+            {isFetching && !data && <LiveSearchLog />}
+            {!isFetching && data?.sources?.length ? (
+              <SourceStrip sources={data.sources} />
+            ) : null}
           </div>
         </section>
 
@@ -503,7 +516,7 @@ function Buscar() {
                 )}
                 {view === "table" ? (
                   <ResultsTable
-                    items={filtered.slice(0, visible)}
+                    items={pageItems}
                     onOpen={setOpened}
                     onSave={toggleSave}
                     savedIds={saved}
@@ -513,7 +526,7 @@ function Buscar() {
                   />
                 ) : (
                   <div className="flex flex-col gap-3">
-                    {filtered.slice(0, visible).map((it) => (
+                    {pageItems.map((it) => (
                       <ResultCard
                         key={it.id}
                         item={it}
@@ -525,12 +538,16 @@ function Buscar() {
                     ))}
                   </div>
                 )}
-                {visible < filtered.length && (
-                  <div ref={sentinelRef} className="flex items-center justify-center py-10 text-muted-foreground text-sm">
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    Carregando mais resultados…
-                  </div>
-                )}
+                <Pager
+                  page={safePage}
+                  totalPages={totalPages}
+                  pageSize={pageSize}
+                  total={filtered.length}
+                  start={pageStart}
+                  end={pageStart + pageItems.length}
+                  onPage={setPage}
+                  onPageSize={setPageSize}
+                />
               </>
             )}
           </section>
@@ -575,10 +592,8 @@ function ResultsSkeleton() {
 }
 
 function SourceStrip({
-  loading,
   sources,
 }: {
-  loading: boolean;
   sources?: { name: string; domain?: string; total: number }[];
 }) {
   const fallback = ["PNCP", "Compras.gov.br", "TCE-CE", "TCEs/portais oficiais", "Fornecedores"];
@@ -587,10 +602,7 @@ function SourceStrip({
     : fallback.map((name) => ({ name, total: 0 }));
   return (
     <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-      <span className="inline-flex items-center gap-1 pr-1">
-        {loading && <Loader2 className="h-3 w-3 animate-spin" />}
-        {loading ? "Pesquisando em" : "Fontes consultadas"}
-      </span>
+      <span className="inline-flex items-center gap-1 pr-1">Fontes consultadas</span>
       {list.map((source) => (
         <span
           key={`${source.name}-${source.domain ?? ""}`}
@@ -602,6 +614,128 @@ function SourceStrip({
         </span>
       ))}
     </div>
+  );
+}
+
+/**
+ * Log rotativo durante a varredura — passa por cada fonte oficial a cada ~700ms
+ * pra mostrar ao usuário que o sistema está vivo e onde está buscando.
+ */
+function LiveSearchLog() {
+  const stages = useMemo(
+    () => [
+      "PNCP (Portal Nacional de Contratações Públicas)",
+      "Compras.gov.br",
+      "Portal da Transparência",
+      "TCE-CE",
+      "Transparência de Itarema",
+      "Diários Oficiais municipais",
+      "Atas de Registro de Preços",
+      "Bases de fornecedores",
+    ],
+    [],
+  );
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setIdx((i) => (i + 1) % stages.length), 700);
+    return () => clearInterval(t);
+  }, [stages.length]);
+  return (
+    <div className="mt-3 inline-flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1 text-[11px] font-mono text-muted-foreground">
+      <Loader2 className="h-3 w-3 animate-spin text-accent" />
+      <span>
+        Buscando em <span className="text-foreground">{stages[idx]}</span>
+        <span className="text-muted-foreground">…</span>
+      </span>
+    </div>
+  );
+}
+
+function Pager({
+  page,
+  totalPages,
+  pageSize,
+  total,
+  start,
+  end,
+  onPage,
+  onPageSize,
+}: {
+  page: number;
+  totalPages: number;
+  pageSize: number;
+  total: number;
+  start: number;
+  end: number;
+  onPage: (p: number) => void;
+  onPageSize: (n: number) => void;
+}) {
+  // Janela compacta de páginas: 1 … p-1 p p+1 … N
+  const pages: (number | "ellipsis")[] = useMemo(() => {
+    const set = new Set<number>([1, totalPages, page, page - 1, page + 1]);
+    const arr = [...set].filter((n) => n >= 1 && n <= totalPages).sort((a, b) => a - b);
+    const out: (number | "ellipsis")[] = [];
+    for (let i = 0; i < arr.length; i++) {
+      out.push(arr[i]);
+      if (i < arr.length - 1 && arr[i + 1] - arr[i] > 1) out.push("ellipsis");
+    }
+    return out;
+  }, [page, totalPages]);
+
+  const go = (p: number) => onPage(Math.min(totalPages, Math.max(1, p)));
+  const btn = "inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-border bg-card px-2 text-xs tabular-nums hover:bg-secondary transition-smooth disabled:opacity-40 disabled:pointer-events-none";
+
+  return (
+    <nav
+      aria-label="Paginação"
+      className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-border bg-card/60 px-3 py-2"
+    >
+      <div className="text-xs text-muted-foreground">
+        Exibindo <span className="font-medium text-foreground tabular-nums">{total === 0 ? 0 : start + 1}–{end}</span>{" "}
+        de <span className="font-medium text-foreground tabular-nums">{total}</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <button className={btn} onClick={() => go(1)} disabled={page === 1} aria-label="Primeira página">
+          <ChevronsLeft className="h-3.5 w-3.5" />
+        </button>
+        <button className={btn} onClick={() => go(page - 1)} disabled={page === 1} aria-label="Página anterior">
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </button>
+        {pages.map((p, i) =>
+          p === "ellipsis" ? (
+            <span key={`e-${i}`} className="px-1 text-muted-foreground text-xs">…</span>
+          ) : (
+            <button
+              key={p}
+              onClick={() => go(p)}
+              aria-current={p === page ? "page" : undefined}
+              className={`${btn} ${p === page ? "bg-accent/15 text-accent border-accent/40" : ""}`}
+            >
+              {p}
+            </button>
+          ),
+        )}
+        <button className={btn} onClick={() => go(page + 1)} disabled={page === totalPages} aria-label="Próxima página">
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+        <button className={btn} onClick={() => go(totalPages)} disabled={page === totalPages} aria-label="Última página">
+          <ChevronsRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <label htmlFor="page-size">Por página</label>
+        <select
+          id="page-size"
+          value={pageSize}
+          onChange={(e) => onPageSize(Number(e.target.value))}
+          className="rounded-md border border-input bg-background px-2 py-1 text-xs tabular-nums outline-none focus:ring-2 focus:ring-ring"
+        >
+          {[10, 20, 50, 100].map((n) => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+        </select>
+      </div>
+    </nav>
   );
 }
 
