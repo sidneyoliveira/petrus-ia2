@@ -654,17 +654,27 @@ export const searchPrices = createServerFn({ method: "POST" })
     const knownDomains = new Set(catalog.map((s) => s.domain));
     const siteFilters = catalog.map((s) => s.domain);
 
-    // 2) Busca paralela em múltiplas fontes oficiais + variações + Firecrawl (se habilitado)
+    // 2) Busca paralela MASSIVA em múltiplas fontes oficiais + variações de query
+    //    (várias páginas, várias fontes, vários filtros de site no Firecrawl).
     const tasks: Promise<RawItem[]>[] = [];
     for (const v of variants) {
-      tasks.push(fetchPNCP(v, pagina));
+      // PNCP — varre 3 páginas de cada variante (3 × 50 = 150 por variante)
+      tasks.push(fetchPNCP(v, pagina, 50));
+      tasks.push(fetchPNCP(v, pagina + 1, 50));
+      tasks.push(fetchPNCP(v, pagina + 2, 50));
       tasks.push(fetchComprasGov(v));
       tasks.push(fetchTransparencia(v));
     }
-    tasks.push(fetchFirecrawlWeb(data.query, siteFilters));
-    // chama Firecrawl 2x — uma com filtros gov.br federal, outra com TCEs
+    // Firecrawl — chama com vários conjuntos de domínios para diversificar
     const tceDomains = catalog.filter((s) => s.domain.startsWith("tce.")).map((s) => s.domain);
-    if (tceDomains.length > 0) tasks.push(fetchFirecrawlWeb(data.query, tceDomains));
+    const govFederal = catalog
+      .filter((s) => /(^|\.)gov\.br$/.test(s.domain) && !s.domain.startsWith("tce."))
+      .map((s) => s.domain);
+    for (const v of variants.slice(0, 3)) {
+      tasks.push(fetchFirecrawlWeb(v, siteFilters));
+      if (tceDomains.length > 0) tasks.push(fetchFirecrawlWeb(v, tceDomains));
+      if (govFederal.length > 0) tasks.push(fetchFirecrawlWeb(v, govFederal));
+    }
     const settled = await Promise.allSettled(tasks);
     let raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
 
@@ -674,6 +684,12 @@ export const searchPrices = createServerFn({ method: "POST" })
     raw = await enrichWithPNCPItems(raw, data.query, 12);
 
     let results = raw.map(toResult);
+
+    // Descarta resultados cujo título E descrição parecem corpo de PDF
+    // (preâmbulos, cláusulas, etc.) — sem ter como extrair item específico.
+    results = results.filter(
+      (r) => !(looksLikeRawDocumentText(r.titulo) && looksLikeRawDocumentText(r.descricao)),
+    );
 
     // Descarta resultados com valor claramente do processo todo quando exceder
     // um teto razoável para um único item (heurística: > R$ 500.000 sem unidade).
