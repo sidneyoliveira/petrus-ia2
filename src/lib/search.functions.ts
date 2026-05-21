@@ -508,6 +508,68 @@ async function fetchFirecrawlWeb(query: string, siteFilters: string[]): Promise<
   }
 }
 
+// Busca FORNECEDORES REAIS na internet (fabricantes/distribuidores B2B,
+// catálogos, e-commerces especializados). Exclui marketplaces proibidos.
+// Inciso V da Lei 14.133/2021 — cotação direta com fornecedores.
+async function fetchFirecrawlSuppliers(query: string): Promise<RawItem[]> {
+  const key = process.env.FIRECRAWL_API_KEY;
+  if (!key) return [];
+  // Operadores de exclusão para banir marketplaces poluentes
+  const excludes = "-site:mercadolivre.com.br -site:shopee.com.br -site:aliexpress.com -site:olx.com.br -site:facebook.com -site:amazon.com.br";
+  const q = `${query} preço "R$" (fornecedor OR fabricante OR distribuidor OR atacado OR catálogo OR cotação) ${excludes}`;
+  try {
+    const res = await fetch("https://api.firecrawl.dev/v2/search", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query: q, limit: 15, lang: "pt", country: "br" }),
+    });
+    if (!res.ok) {
+      console.warn("Firecrawl suppliers HTTP", res.status);
+      return [];
+    }
+    const json = (await res.json()) as {
+      data?: { web?: Array<{ url?: string; title?: string; description?: string }> } | Array<{ url?: string; title?: string; description?: string }>;
+      web?: Array<{ url?: string; title?: string; description?: string }>;
+    };
+    const arr = Array.isArray(json.data) ? json.data : (json.data?.web ?? json.web ?? []);
+    return arr
+      .filter((r) => {
+        const blob = `${r.url ?? ""} ${r.title ?? ""}`.toLowerCase();
+        return !FORBIDDEN.some((f) => blob.includes(f));
+      })
+      .map((r, i): RawItem => {
+        // Tenta extrair preço do snippet ("R$ 1.234,56" / "R$1234,56")
+        const txt = `${r.title ?? ""} ${r.description ?? ""}`;
+        const m = txt.match(/R\$\s*([\d.]+,\d{2}|\d+(?:[.,]\d{2})?)/i);
+        let priceNum: number | undefined;
+        if (m) {
+          const norm = m[1].replace(/\.(?=\d{3}(?:[.,]|$))/g, "").replace(",", ".");
+          const p = parseFloat(norm);
+          if (isFinite(p) && p > 0 && p < 10_000_000) priceNum = p;
+        }
+        let host = "";
+        try { host = r.url ? new URL(r.url).hostname.replace(/^www\./, "") : ""; } catch { /* noop */ }
+        return {
+          id: `sup-${i}-${(r.url ?? "").slice(-40)}`,
+          title: r.title ?? r.url ?? "Fornecedor",
+          description: r.description ?? "",
+          url: r.url,
+          orgao_nome: host || "Fornecedor",
+          valor_unitario: priceNum,
+          tipo_documento: "outro",
+          _source: "Outro",
+          _supplier: true,
+        } as RawItem;
+      });
+  } catch (e) {
+    console.warn("Firecrawl suppliers error", (e as Error).message);
+    return [];
+  }
+}
+
 // Lê catálogo de fontes (price_sources) ordenado por prioridade e taxa de sucesso.
 async function loadActiveSources(): Promise<{ domain: string; name: string }[]> {
   try {
