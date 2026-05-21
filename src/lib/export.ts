@@ -19,7 +19,10 @@ function download(filename: string, content: string, mime: string) {
 
 export function exportCSV(results: PriceResult[], query: string) {
   const headers = [
-    "Título", "Descrição", "Valor", "Fornecedor", "CNPJ", "Órgão",
+    "Título", "Descrição", "Unidade", "Quantidade",
+    "Valor Unitário", "Valor Total", "Tipo de Valor",
+    "Qtd × Unit = Total", "Qualidade da Extração",
+    "Fornecedor", "CNPJ", "Órgão",
     "Município", "UF", "Data", "Modalidade", "Situação", "Origem",
     "Homologado", "Score Final", "URL",
   ];
@@ -29,13 +32,28 @@ export function exportCSV(results: PriceResult[], query: string) {
   };
   const rows = results.map((r) =>
     [
-      r.titulo, r.descricao, brl(r.valor), r.fornecedor ?? "", r.cnpj ?? "",
+      r.titulo, r.descricao,
+      (r.unidade ?? "").toUpperCase(),
+      typeof r.quantidade === "number" ? r.quantidade : "",
+      brl(r.valor),
+      brl(r.valorTotal),
+      r.valorTipo ?? "",
+      r.mathStatus ?? "",
+      r.extractionQuality ?? "",
+      r.fornecedor ?? "", r.cnpj ?? "",
       r.orgao ?? "", r.municipio ?? "", r.uf ?? "", r.data ?? "",
       r.modalidade ?? "", r.situacao ?? "", r.origem, r.homologado ? "Sim" : "Não",
       Math.round(r.scoreFinal * 100) + "%", r.url ?? "",
     ].map(esc).join(";"),
   );
-  const csv = "\ufeff" + [headers.join(";"), ...rows].join("\n");
+  const meta = [
+    `# CotaçãoIA — Pesquisa de Preços`,
+    `# Termo;${esc(query)}`,
+    `# Gerado em;${esc(new Date().toLocaleString("pt-BR"))}`,
+    `# Total de itens;${results.length}`,
+    "",
+  ].join("\n");
+  const csv = "\ufeff" + meta + [headers.join(";"), ...rows].join("\n");
   download(`cotacao_${slug(query)}.csv`, csv, "text/csv");
 }
 
