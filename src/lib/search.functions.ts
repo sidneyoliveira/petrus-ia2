@@ -369,12 +369,21 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
   const passthrough: RawItem[] = [];
   for (const r of raw) {
     const parsed = parsePncpPublicUrl((r.item_url as string | undefined) || (r.url as string | undefined));
-    const cnpj = (r.orgao_cnpj ?? parsed?.cnpj ?? "").replace(/\D/g, "");
-    const ano = r.ano ?? parsed?.ano;
-    const seqRaw = r.numero_sequencial_compra_ata ?? r.numero_sequencial ?? r.numero ?? parsed?.sequencial ?? "";
+    // numero_controle_pncp = "CNPJ-1-SEQ/ANO" — única fonte confiável p/ resultados
+    // da busca PNCP que não trazem cnpj/ano/seq separados nos campos diretos.
+    const fromControle = parseNumeroControlePncpCompra(r.numero_controle_pncp);
+    const cnpj = (r.orgao_cnpj ?? parsed?.cnpj ?? fromControle?.cnpj ?? "").replace(/\D/g, "");
+    const ano = r.ano ?? parsed?.ano ?? fromControle?.ano;
+    const seqRaw =
+      r.numero_sequencial_compra_ata ??
+      r.numero_sequencial ??
+      r.numero ??
+      parsed?.sequencial ??
+      fromControle?.sequencial ??
+      "";
     const seq = String(seqRaw).replace(/\D/g, "");
     const isPNCP = !r._source || r._source === "PNCP" || r._source === "Transparência" || r._source === "Compras.gov.br";
-    if ((isPNCP || parsed) && cnpj.length === 14 && ano && seq && enrichable.length < limit) {
+    if ((isPNCP || parsed || fromControle) && cnpj.length === 14 && ano && seq && enrichable.length < limit) {
       const tipo = String(r.document_type ?? r.tipo_documento ?? parsed?.tipo ?? "").toLowerCase();
       enrichable.push({
         ...r,
@@ -387,6 +396,9 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
       passthrough.push(r);
     }
   }
+  console.info(
+    `[enrichPNCP] raw=${raw.length} enrichable=${enrichable.length} passthrough=${passthrough.length} limit=${limit}`,
+  );
 
   // Concorrência limitada para não estourar o gateway do PNCP
   const CONCURRENCY = 8;
