@@ -7,6 +7,7 @@ const FilterSchema = z.object({
   query: z.string().min(2).max(200),
   uf: z.string().optional(),
   modalidade: z.string().optional(),
+  unidade: z.string().optional(),
   apenasHomologados: z.boolean().optional(),
   ultimosMeses: z.number().int().min(1).max(36).optional(),
   valorMin: z.number().optional(),
