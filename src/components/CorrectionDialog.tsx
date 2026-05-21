@@ -19,7 +19,6 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { submitCorrection } from "@/lib/corrections.functions";
-import { toast } from "sonner";
 import type { PriceResult } from "@/lib/types";
 
 type Field =
@@ -79,15 +78,17 @@ export function CorrectionDialog({ open, onOpenChange, item, query }: Props) {
   const [userNote, setUserNote] = useState("");
   const [excerpt, setExcerpt] = useState("");
   const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: "err" | "ok"; text: string } | null>(null);
 
   const valueBefore = beforeValueFor(item, field);
 
   async function handleSubmit() {
     if (!valueAfter.trim()) {
-      toast.error("Informe o valor correto.");
+      setMsg({ kind: "err", text: "Informe o valor correto." });
       return;
     }
     setBusy(true);
+    setMsg(null);
     try {
       const res = await submit({
         data: {
@@ -102,16 +103,16 @@ export function CorrectionDialog({ open, onOpenChange, item, query }: Props) {
         },
       });
       if (res.ok) {
-        toast.success("Correção registrada. Próximas buscas vão usar como referência.");
-        onOpenChange(false);
+        setMsg({ kind: "ok", text: "Correção registrada. Obrigado!" });
         setValueAfter("");
         setUserNote("");
         setExcerpt("");
+        setTimeout(() => onOpenChange(false), 1200);
       } else {
-        toast.error(res.error || "Falha ao registrar correção.");
+        setMsg({ kind: "err", text: res.error || "Falha ao registrar correção." });
       }
     } catch (e) {
-      toast.error((e as Error).message);
+      setMsg({ kind: "err", text: (e as Error).message });
     } finally {
       setBusy(false);
     }
