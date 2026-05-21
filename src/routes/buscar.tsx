@@ -1,9 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { Search, Loader2, Sparkles, Download, FileText, FileJson, FileSpreadsheet, SlidersHorizontal, AlertCircle } from "lucide-react";
+import { Search, Loader2, Sparkles, Download, FileText, FileJson, FileSpreadsheet, SlidersHorizontal, AlertCircle, Database, RefreshCw } from "lucide-react";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import { ResultCard } from "@/components/ResultCard";
@@ -54,6 +54,7 @@ function Buscar() {
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   const callSearch = useServerFn(searchPrices);
+  const queryClient = useQueryClient();
 
   // Debounce input -> URL q
   useEffect(() => {
@@ -89,6 +90,41 @@ function Buscar() {
         },
       }),
   });
+
+  // Refresh em background quando o resultado vem do cache.
+  // Roda a varredura completa, atualiza o banco e invalida a query
+  // para a UI re-renderizar com os dados frescos.
+  const isCached = !!data?.fromCache;
+  const [refreshing, setRefreshing] = useState(false);
+  useEffect(() => {
+    if (!isCached || q.trim().length < 2) return;
+    let cancelled = false;
+    setRefreshing(true);
+    callSearch({
+      data: {
+        query: q.trim(),
+        pagina: 1,
+        mode,
+        keywords: parsedKeywords.length ? parsedKeywords : undefined,
+        forceRefresh: true,
+      },
+    })
+      .then((fresh) => {
+        if (cancelled) return;
+        queryClient.setQueryData(
+          ["search", q, mode, parsedKeywords.join("|")],
+          fresh,
+        );
+      })
+      .catch((e) => console.warn("background refresh failed", e))
+      .finally(() => {
+        if (!cancelled) setRefreshing(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCached, q, mode, parsedKeywords.join("|")]);
 
   const filtered = useMemo(() => {
     if (!data?.results) return [];
@@ -214,6 +250,21 @@ function Buscar() {
                   </>
                 ) : q ? "Buscando..." : "Digite um termo para pesquisar."}
               </div>
+              {data?.fromCache && (
+                <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] text-muted-foreground">
+                  {refreshing ? (
+                    <>
+                      <RefreshCw className="h-3 w-3 animate-spin" />
+                      Cache de {data.cachedAt ? new Date(data.cachedAt).toLocaleString("pt-BR") : "—"} · atualizando ao vivo…
+                    </>
+                  ) : (
+                    <>
+                      <Database className="h-3 w-3" />
+                      Cache · {data.cachedAt ? new Date(data.cachedAt).toLocaleString("pt-BR") : ""}
+                    </>
+                  )}
+                </div>
+              )}
               {data && filtered.length > 0 && (
                 <div className="flex items-center gap-1">
                   <button onClick={() => exportCSV(filtered, q)} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs hover:bg-secondary transition-smooth">

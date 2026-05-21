@@ -2,6 +2,156 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import type { PriceResult, SearchResponse, SearchSourceStatus } from "./types";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import type { Json } from "@/integrations/supabase/types";
+
+const asJson = <T,>(v: T): Json => v as unknown as Json;
+
+// ============================================================
+// CACHE — quote_searches + quote_items
+// ============================================================
+// Janela de frescor padrão: 24h. Resultados mais novos são servidos do cache
+// imediatamente; resultados velhos ainda são servidos do cache mas a UI
+// dispara um refresh em background.
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+function normalizeQueryNorm(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function filtersHash(d: {
+  uf?: string; modalidade?: string; unidade?: string;
+  apenasHomologados?: boolean; valorMin?: number; valorMax?: number;
+  mode?: string; keywords?: string[]; pagina?: number;
+}): string {
+  return JSON.stringify({
+    uf: d.uf ?? null,
+    modalidade: d.modalidade ?? null,
+    unidade: d.unidade ?? null,
+    apenasHomologados: !!d.apenasHomologados,
+    valorMin: d.valorMin ?? null,
+    valorMax: d.valorMax ?? null,
+    mode: d.mode ?? "semantic",
+    keywords: (d.keywords ?? []).slice().sort(),
+    pagina: d.pagina ?? 1,
+  });
+}
+
+async function readCachedSearch(
+  query_norm: string,
+  filters_hash: string,
+): Promise<{ search: {
+  id: string; computed_at: string; fresh_until: string;
+  sources: SearchSourceStatus[] | null; took_ms: number;
+}; results: PriceResult[] } | null> {
+  try {
+    const { data: search, error } = await supabaseAdmin
+      .from("quote_searches")
+      .select("id, computed_at, fresh_until, sources, took_ms")
+      .eq("query_norm", query_norm)
+      .eq("filters_hash", filters_hash)
+      .maybeSingle();
+    if (error || !search) return null;
+    const { data: items } = await supabaseAdmin
+      .from("quote_items")
+      .select("payload")
+      .eq("search_id", search.id)
+      .order("score_final", { ascending: false })
+      .limit(500);
+    const results = (items ?? [])
+      .map((r) => r.payload as unknown as PriceResult)
+      .filter((r) => r && typeof r === "object" && r.id);
+    return {
+      search: search as {
+        id: string; computed_at: string; fresh_until: string;
+        sources: SearchSourceStatus[] | null; took_ms: number;
+      },
+      results,
+    };
+  } catch (e) {
+    console.warn("readCachedSearch failed", (e as Error).message);
+    return null;
+  }
+}
+
+async function writeCachedSearch(opts: {
+  query_norm: string;
+  query_raw: string;
+  filters_hash: string;
+  filters: Record<string, unknown>;
+  sources: SearchSourceStatus[];
+  tookMs: number;
+  results: PriceResult[];
+}): Promise<void> {
+  try {
+    const { data: search, error } = await supabaseAdmin
+      .from("quote_searches")
+      .upsert(
+        {
+          query_norm: opts.query_norm,
+          query_raw: opts.query_raw.slice(0, 500),
+          filters_hash: opts.filters_hash,
+          filters: asJson(opts.filters),
+          total: opts.results.length,
+          took_ms: opts.tookMs,
+          sources: asJson(opts.sources),
+          computed_at: new Date().toISOString(),
+          fresh_until: new Date(Date.now() + CACHE_TTL_MS).toISOString(),
+        },
+        { onConflict: "query_norm,filters_hash" },
+      )
+      .select("id")
+      .single();
+    if (error || !search) {
+      console.warn("write quote_searches err", error?.message);
+      return;
+    }
+    await supabaseAdmin.from("quote_items").delete().eq("search_id", search.id);
+    const rows = opts.results.slice(0, 500).map((r) => ({
+      fingerprint: `${opts.query_norm}|${r.id}`.slice(0, 240),
+      search_id: search.id,
+      query_norm: opts.query_norm,
+      titulo: (r.titulo || "").slice(0, 500),
+      descricao: (r.descricao || "").slice(0, 3000),
+      unidade: r.unidade ?? null,
+      quantidade: r.quantidade ?? null,
+      valor: r.valor ?? null,
+      valor_total: r.valorTotal ?? null,
+      valor_tipo: r.valorTipo ?? null,
+      fornecedor: r.fornecedor ?? null,
+      cnpj: r.cnpj ?? null,
+      orgao: r.orgao ?? null,
+      municipio: r.municipio ?? null,
+      uf: r.uf ?? null,
+      data:
+        r.data && /^\d{4}-\d{2}-\d{2}/.test(r.data) ? r.data.slice(0, 10) : null,
+      modalidade: r.modalidade ?? null,
+      homologado: !!r.homologado,
+      origem: r.origem ?? null,
+      url: r.url ?? null,
+      documento: r.documento ?? null,
+      score_final: r.scoreFinal ?? null,
+      payload: asJson(r),
+    }));
+    for (let i = 0; i < rows.length; i += 200) {
+      const chunk = rows.slice(i, i + 200);
+      const { error: e2 } = await supabaseAdmin
+        .from("quote_items")
+        .upsert(chunk, { onConflict: "fingerprint" });
+      if (e2) console.warn("write quote_items err", e2.message);
+    }
+    console.info(
+      `[cache] wrote search id=${search.id} items=${rows.length} q="${opts.query_raw.slice(0, 60)}"`,
+    );
+  } catch (e) {
+    console.warn("writeCachedSearch failed", (e as Error).message);
+  }
+}
 
 const FilterSchema = z.object({
   query: z.string().trim().min(1).max(200),
@@ -15,6 +165,8 @@ const FilterSchema = z.object({
   pagina: z.number().int().min(1).max(50).optional(),
   keywords: z.array(z.string().min(1).max(60)).max(20).optional(),
   mode: z.enum(["semantic", "exact", "all_keywords"]).optional(),
+  /** Quando true, ignora cache e refaz a varredura completa. */
+  forceRefresh: z.boolean().optional(),
 });
 
 const FORBIDDEN = [
@@ -367,12 +519,21 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
   const passthrough: RawItem[] = [];
   for (const r of raw) {
     const parsed = parsePncpPublicUrl((r.item_url as string | undefined) || (r.url as string | undefined));
-    const cnpj = (r.orgao_cnpj ?? parsed?.cnpj ?? "").replace(/\D/g, "");
-    const ano = r.ano ?? parsed?.ano;
-    const seqRaw = r.numero_sequencial_compra_ata ?? r.numero_sequencial ?? r.numero ?? parsed?.sequencial ?? "";
+    // numero_controle_pncp = "CNPJ-1-SEQ/ANO" — única fonte confiável p/ resultados
+    // da busca PNCP que não trazem cnpj/ano/seq separados nos campos diretos.
+    const fromControle = parseNumeroControlePncpCompra(r.numero_controle_pncp);
+    const cnpj = (r.orgao_cnpj ?? parsed?.cnpj ?? fromControle?.cnpj ?? "").replace(/\D/g, "");
+    const ano = r.ano ?? parsed?.ano ?? fromControle?.ano;
+    const seqRaw =
+      r.numero_sequencial_compra_ata ??
+      r.numero_sequencial ??
+      r.numero ??
+      parsed?.sequencial ??
+      fromControle?.sequencial ??
+      "";
     const seq = String(seqRaw).replace(/\D/g, "");
     const isPNCP = !r._source || r._source === "PNCP" || r._source === "Transparência" || r._source === "Compras.gov.br";
-    if ((isPNCP || parsed) && cnpj.length === 14 && ano && seq && enrichable.length < limit) {
+    if ((isPNCP || parsed || fromControle) && cnpj.length === 14 && ano && seq && enrichable.length < limit) {
       const tipo = String(r.document_type ?? r.tipo_documento ?? parsed?.tipo ?? "").toLowerCase();
       enrichable.push({
         ...r,
@@ -385,6 +546,9 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
       passthrough.push(r);
     }
   }
+  console.info(
+    `[enrichPNCP] raw=${raw.length} enrichable=${enrichable.length} passthrough=${passthrough.length} limit=${limit}`,
+  );
 
   // Concorrência limitada para não estourar o gateway do PNCP
   const CONCURRENCY = 8;
@@ -1320,7 +1484,11 @@ function isGranularItemResult(r: PriceResult): boolean {
   }
   if (isSupplierOrCommercial(r)) return true;
   if (r.valorTipo === "unitario_homologado" || r.valorTipo === "unitario_estimado") return true;
-  return Boolean(r.unidade || r.quantidade || r.valorTotal);
+  // Afrouxa: aceita item se tem qualquer sinal de granularidade — unidade,
+  // quantidade, valor total OU apenas um valor unitário visível com título
+  // que não parece processo (já filtrado acima). Sem isso, itens minerados
+  // de PDF/HTML eram silenciosamente descartados.
+  return Boolean(r.unidade || r.quantidade || r.valorTotal || typeof r.valor === "number");
 }
 
 function summarizeSources(results: PriceResult[], catalog: { domain: string; name: string }[]): SearchSourceStatus[] {
@@ -1479,6 +1647,33 @@ export const searchPrices = createServerFn({ method: "POST" })
     const pagina = data.pagina ?? 1;
     const ultimosMeses = data.ultimosMeses ?? 12;
 
+    // 0) CACHE — chave determinística por (query_norm, filters_hash).
+    //    Se cliente NÃO pediu forceRefresh e existe registro no banco,
+    //    devolve imediatamente. O frontend dispara o refresh em background.
+    const query_norm = normalizeQueryNorm(data.query);
+    const fHash = filtersHash(data);
+    if (!data.forceRefresh) {
+      const cached = await readCachedSearch(query_norm, fHash);
+      if (cached && cached.results.length > 0) {
+        const fresh = new Date(cached.search.fresh_until).getTime() > Date.now();
+        console.info(
+          `[cache] HIT q="${data.query.slice(0, 60)}" items=${cached.results.length} fresh=${fresh}`,
+        );
+        return {
+          results: cached.results,
+          total: cached.results.length,
+          pagina,
+          pageSize: 20,
+          query: data.query,
+          tookMs: Date.now() - t0,
+          sources: cached.search.sources ?? [],
+          fromCache: true,
+          cachedAt: cached.search.computed_at,
+          stale: !fresh,
+        };
+      }
+    }
+
     // 1) Expansão inteligente da consulta (sinônimos via IA)
     const mode = data.mode ?? "semantic";
     const variants =
@@ -1537,8 +1732,8 @@ export const searchPrices = createServerFn({ method: "POST" })
     // 2b) Enriquece com ITENS individuais do PNCP para ter valor unitário real.
     // A busca do PNCP só devolve processos inteiros — sem o /itens o usuário
     // veria apenas o "objeto do contrato" (descrição do processo todo).
-    // Aumentamos bastante o limite para garantir cobertura por item.
-    raw = await enrichWithPNCPItems(raw, data.query, 120);
+    // Limite alto para garantir cobertura por item.
+    raw = await enrichWithPNCPItems(raw, data.query, 250);
 
     let results = raw.map(toResult);
 
@@ -1717,13 +1912,29 @@ export const searchPrices = createServerFn({ method: "POST" })
       console.warn("learning boost skipped:", (e as Error).message);
     }
 
+    const sourcesSummary = summarizeSources(results, catalog);
+    const tookMs = Date.now() - t0;
+
+    // Persiste no cache (não bloqueia o retorno, mas aguardamos curto para
+    // garantir que a próxima consulta idêntica encontre o registro).
+    await writeCachedSearch({
+      query_norm,
+      query_raw: data.query,
+      filters_hash: fHash,
+      filters: JSON.parse(fHash) as Record<string, unknown>,
+      sources: sourcesSummary,
+      tookMs,
+      results,
+    });
+
     return {
       results,
       total: results.length,
       pagina,
       pageSize: 20,
       query: data.query,
-      tookMs: Date.now() - t0,
-      sources: summarizeSources(results, catalog),
+      tookMs,
+      sources: sourcesSummary,
+      fromCache: false,
     };
   });
