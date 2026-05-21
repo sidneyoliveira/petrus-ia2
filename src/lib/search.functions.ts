@@ -570,7 +570,21 @@ async function expandQuery(query: string, apiKey: string | undefined): Promise<s
 
 // Busca aberta via Firecrawl em portais oficiais .gov.br (quando o conector estiver ativo).
 // Caso FIRECRAWL_API_KEY não esteja configurada, retorna [] silenciosamente.
-async function fetchFirecrawlWeb(query: string, siteFilters: string[]): Promise<RawItem[]> {
+function sourceMetaForUrl(url: string | undefined, catalog: { domain: string; name: string }[]) {
+  if (!url) return { domain: undefined, name: undefined };
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    const match = catalog.find((s) => {
+      const domainHost = s.domain.split("/")[0].replace(/^www\./, "");
+      return host === domainHost || host.endsWith(`.${domainHost}`) || domainHost.endsWith(`.${host}`);
+    });
+    return { domain: match?.domain ?? host, name: match?.name ?? host };
+  } catch {
+    return { domain: undefined, name: undefined };
+  }
+}
+
+async function fetchFirecrawlWeb(query: string, siteFilters: string[], catalog: { domain: string; name: string }[] = []): Promise<RawItem[]> {
   const key = process.env.FIRECRAWL_API_KEY;
   if (!key) return [];
   // Constrói consulta com OR de domínios priorizados pelo catálogo (price_sources)
@@ -599,14 +613,19 @@ async function fetchFirecrawlWeb(query: string, siteFilters: string[]): Promise<
     const arr = Array.isArray(json.data)
       ? json.data
       : (json.data?.web ?? json.web ?? []);
-    return arr.map((r, i): RawItem => ({
-      id: `fc-${i}-${(r.url ?? "").slice(-40)}`,
-      title: r.title ?? r.url ?? "Resultado web",
-      description: r.description ?? "",
-      url: r.url,
-      tipo_documento: /ata/i.test(`${r.title} ${r.url}`) ? "ata" : /contrato/i.test(`${r.title} ${r.url}`) ? "contrato" : /edital|pregao|preg%C3%A3o/i.test(`${r.title} ${r.url}`) ? "edital" : "outro",
-      _source: "Outro",
-    }));
+    return arr.map((r, i): RawItem => {
+      const meta = sourceMetaForUrl(r.url, catalog);
+      return {
+        id: `fc-${i}-${(r.url ?? "").slice(-40)}`,
+        title: r.title ?? r.url ?? "Resultado web",
+        description: r.description ?? "",
+        url: r.url,
+        tipo_documento: /ata/i.test(`${r.title} ${r.url}`) ? "ata" : /contrato/i.test(`${r.title} ${r.url}`) ? "contrato" : /edital|pregao|preg%C3%A3o/i.test(`${r.title} ${r.url}`) ? "edital" : "outro",
+        _source: meta.name ?? "Web oficial",
+        _sourceDomain: meta.domain,
+        _sourceName: meta.name,
+      };
+    });
   } catch (e) {
     console.warn("Firecrawl error", (e as Error).message);
     return [];
