@@ -33,7 +33,7 @@ export const submitFeedback = createServerFn({ method: "POST" })
       source: data.source,
       action: data.action,
       reason: data.reason ?? null,
-      snapshot: data.snapshot ?? null,
+      snapshot: (data.snapshot ?? null) as never,
     });
     if (error) {
       console.error("feedback insert error", error);
