@@ -282,6 +282,22 @@ function Buscar() {
               )}
               {data && filtered.length > 0 && (
                 <div className="flex items-center gap-1">
+                  <div className="mr-2 inline-flex items-center rounded-md border border-border bg-card overflow-hidden">
+                    <button
+                      onClick={() => setView("table")}
+                      title="Tabela facetada"
+                      className={`inline-flex items-center gap-1 px-2 py-1.5 text-xs transition-smooth ${view === "table" ? "bg-accent/15 text-accent" : "hover:bg-secondary text-muted-foreground"}`}
+                    >
+                      <Rows3 className="h-3.5 w-3.5" /> Tabela
+                    </button>
+                    <button
+                      onClick={() => setView("cards")}
+                      title="Cards"
+                      className={`inline-flex items-center gap-1 px-2 py-1.5 text-xs transition-smooth ${view === "cards" ? "bg-accent/15 text-accent" : "hover:bg-secondary text-muted-foreground"}`}
+                    >
+                      <LayoutGrid className="h-3.5 w-3.5" /> Cards
+                    </button>
+                  </div>
                   <button onClick={() => exportCSV(filtered, q)} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs hover:bg-secondary transition-smooth">
                     <FileSpreadsheet className="h-3.5 w-3.5" /> CSV
                   </button>
