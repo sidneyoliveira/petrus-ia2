@@ -7,10 +7,16 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 // passamos o `source_excerpt` para o Lovable AI Gateway e tentamos inferir
 // quantidade + unidade + valor unitário. Roda em background, sem bloquear o
 // retorno da busca, e marca o status para não reprocessar o mesmo item.
+//
+// Rodada D-final: injeta como few-shot as correções humanas mais similares
+// (mesmo domínio + mesma query) gravadas em `extraction_corrections`.
 
 const MODEL = "google/gemini-3-flash-preview";
 const MAX_ITEMS_PER_RUN = 15;
 const MIN_EXCERPT_LEN = 40;
+const EMBED_MODEL = "google/gemini-embedding-001";
+const EMBED_DIMS = 768;
+const FEWSHOT_LIMIT = 3;
 
 interface HealCandidate {
   id: string;
@@ -20,6 +26,8 @@ interface HealCandidate {
   quantidade: number | null;
   valor_total: number | null;
   source_excerpt: string | null;
+  url?: string | null;
+  query_norm?: string | null;
 }
 
 interface InferredValue {
