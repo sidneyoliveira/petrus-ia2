@@ -483,3 +483,17 @@ function ResultsSkeleton() {
     </div>
   );
 }
+
+function brl(v: number) {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
+}
+
+function Stat({ label, value, hint, accent }: { label: string; value: string; hint?: string; accent?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className={`text-base font-semibold tabular-nums truncate ${accent ? "text-accent" : ""}`} title={value}>{value}</div>
+      {hint && <div className="text-[10px] text-muted-foreground truncate" title={hint}>{hint}</div>}
+    </div>
+  );
+}
