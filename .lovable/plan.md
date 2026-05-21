@@ -1,121 +1,104 @@
-## Objetivo
+# Plano: Petrus IA → paridade M2A (Enterprise)
 
-Buscar a mesma cotação em **várias fontes públicas simultaneamente** (PNCP, TCEs estaduais, scraping/dorking via Firecrawl), normalizar tudo no mesmo schema `PriceResult`, persistir em `quote_items` e devolver ao usuário com lastro (URL da fonte + trecho original).
+Vou quebrar em **6 rodadas curtas**, cada uma entregável e testável. Hoje implemento a **Rodada A (schema + tríade matemática)**, que destrava todas as outras.
 
-## Arquitetura (equivalência Django → stack atual)
+---
+
+## Estado atual (o que já existe)
+
+- `quote_items` já tem: `titulo`, `descricao`, `valor`, `valor_total`, `valor_tipo`, `quantidade`, `unidade`, `fornecedor`, `cnpj`, `orgao`, `uf`, `data`, `url`, `source_excerpt`, `embedding` (pgvector), `valor_inferido*` (self-healing).
+- Self-healing (Gemini 3 Flash) já infere unitário a partir do `source_excerpt`.
+- pgvector + `match_quote_items` RPC prontos para RAG.
+- Enriquecimento de CNPJ via BrasilAPI cacheado.
+- Frontend hoje é lista de cards (`ResultCard`) + modal, sem tabela facetada.
+
+## O que falta para virar M2A
+
+Schema relacional rígido, **validação matemática defensiva**, **filtros facetados**, **dashboard tabular**, **cesta de cotação** e **RLHF de correção de extração**.
+
+---
+
+## Rodadas
+
+### 🔴 Rodada A — Schema rígido + Matemática Defensiva *(esta rodada)*
+
+**Migração SQL** em `quote_items`:
+- `objeto_estruturado text` (título canônico curto do item, separado de `descricao` técnica)
+- `valor_total_calculado numeric` (qtd × unitário)
+- `math_status text` — `ok` | `divergente` | `incompleto` | `single_value`
+- `math_delta_pct numeric` (|total − calc| / total)
+- `extraction_quality text` — `tríade_ok` | `sem_qtd` | `sem_unitário` | `só_global` | `lixo`
+- índice em `(math_status, extraction_quality)` para o dashboard filtrar
+
+**Lógica `src/lib/extract/triad.ts`** (puro, testável):
+- `classifyTriad({quantidade, valor, valor_total})` → retorna `extraction_quality` + `math_status` + `delta_pct`.
+- Regras:
+  - Se `qtd && unit && total` e |qtd·unit − total|/total ≤ 0.02 → `tríade_ok` + `ok`.
+  - Se divergir > 2% → `divergente` (não descarta, marca pra healer reprocessar).
+  - Se só tem `valor_total` sem qtd → `só_global` (sinal de "valor global da licitação", baixa confiança).
+  - Sem nenhum sinal numérico → `lixo` (filtrado por padrão do dashboard).
+- Testes unitários em `src/lib/extract/triad.test.ts`.
+
+**Wire no `search.functions.ts`**: ao persistir resultado novo em `quote_items`, rodar `classifyTriad` e gravar os campos. Resultados retornados ao frontend ganham `mathStatus` e `extractionQuality` em `PriceResult`.
+
+**Healer rodada 2 estendido**: passa a reprocessar itens com `math_status='divergente'` (não só `valor IS NULL`).
+
+### Rodada B — Dashboard facetado (tabela M2A-style)
+- Nova rota `/dashboard` com `<Table>` shadcn: colunas Item, Unidade, Qtd, Unitário, Total, Órgão/UF, Data, Fornecedor, ✅ Matemática.
+- Sidebar de filtros: UF, faixa de valor unitário, origem, **só tríade_ok**, data, modalidade.
+- Cada linha expande (`Collapsible`) mostrando `descricao` + `source_excerpt` + botão "Ver Fonte com Destaque" (já existe).
+- Badge colorido por `math_status` (verde/âmbar/vermelho).
+
+### Rodada C — Cesta de cotação ("Adicionar à Minha Cotação")
+- Tabela `quote_baskets` + `basket_items` (RLS por sessão anônima via `basket_token` em localStorage).
+- Botão `+ Selecionar` em cada linha.
+- Página `/cotacao` lista itens da cesta, calcula mediana/média/min/max por item, exporta CSV/PDF (reusa `src/lib/export.ts`).
+
+### Rodada D — RLHF "❌ Corrigir Extração"
+- Botão no card abre dialog: "Onde estava o valor unitário?" (textarea/seletor de span).
+- Tabela `extraction_corrections (item_id, field, before, after, source_domain, source_url, user_note, created_at, embedding)`.
+- Próxima busca: antes de chamar o healer/extractor, faz `match_corrections(query_embedding, domain)` e injeta as 3 correções mais similares no prompt como few-shot ("nesta fonte, valor unitário fica na coluna 4").
+
+### Rodada E — Reverse engineering de portais (M2A, BLL, PCP)
+- `src/lib/sources/m2a.ts`, `bll.ts`, `pcp.ts`: chamam o endpoint JSON real (descoberto via Network tab) em vez de raspar HTML.
+- Cada source devolve já no schema rígido → entra direto em `quote_items` com `extraction_quality='tríade_ok'`.
+
+### Rodada F — Filtro FPM (porte de município)
+- Tabela `municipios_fpm` (seed do IBGE/STN).
+- Filtro "comparar só com municípios de FPM similar" no dashboard.
+
+---
+
+## Detalhes técnicos da Rodada A
 
 ```text
-                 src/routes/buscar.tsx (React)
-                            │
-                            ▼  useServerFn
-              src/lib/search.functions.ts (RPC)
-                            │
-            ┌───────────────┼─────────────────────────┐
-            ▼               ▼                         ▼
-   pncp.source.ts    tce.source.ts              dorking.source.ts
-   (API oficial)     (TCE-CE/SP/MG via API)     (Firecrawl /search)
-            │               │                         │
-            └───────┬───────┴────────────┬────────────┘
-                    ▼                    ▼
-            normalize() → PriceResult     enrich.ts
-                    │              (BrasilAPI/ReceitaWS p/ CNPJ)
-                    ▼
-            quote_items (cache + lastro)
+src/
+├── lib/
+│   ├── extract/
+│   │   ├── triad.ts          # classifyTriad() puro
+│   │   └── triad.test.ts     # vitest
+│   ├── search.functions.ts   # +classifyTriad ao persistir
+│   ├── heal/value-healer.server.ts  # +query math_status='divergente'
+│   └── types.ts              # PriceResult += mathStatus, extractionQuality, objetoEstruturado
+└── components/ResultCard.tsx # badge math_status
 ```
 
-Cada fonte é um módulo isolado com a mesma interface:
-
-```ts
-export interface PriceSource {
-  id: "pncp" | "tce-ce" | "tce-sp" | "tce-mg" | "dork-pdf" | "dork-html";
-  search(q: NormalizedQuery, signal: AbortSignal): Promise<PriceResult[]>;
-}
+Migração:
+```sql
+ALTER TABLE quote_items
+  ADD COLUMN objeto_estruturado text,
+  ADD COLUMN valor_total_calculado numeric,
+  ADD COLUMN math_status text,
+  ADD COLUMN math_delta_pct numeric,
+  ADD COLUMN extraction_quality text;
+CREATE INDEX quote_items_quality_idx
+  ON quote_items (extraction_quality, math_status);
 ```
 
-O agregador faz `Promise.allSettled` com timeout por fonte (15s) e retorna o que chegou + status por fonte (já temos `SearchSourceStatus`).
+Sem mudanças destrutivas em colunas existentes — só aditivo, seguro pra dados já gravados (ficam `NULL` e são preenchidos no próximo backfill/busca).
 
-## Entregáveis desta rodada
+---
 
-### 1. Estrutura de pastas
-```text
-src/lib/sources/
-  index.ts              # registry + agregador com Promise.allSettled
-  pncp.source.ts        # já existe parcialmente em search.functions.ts → extrair
-  tce-ce.source.ts      # API LCO do TCE-CE
-  tce-sp.source.ts      # API aberta do TCE-SP
-  tce-mg.source.ts      # API aberta do TCE-MG
-  dorking.source.ts     # Firecrawl /v2/search com queries dork
-  enrich/
-    cnpj.ts             # BrasilAPI + fallback ReceitaWS
-    cnae.ts             # bate CNAE × item (peso no scoreFinal)
-```
+## Confirma?
 
-### 2. Schema do banco (nova migração)
-- Adicionar coluna `source_payload_raw jsonb` em `quote_items` (lastro bruto pra auditoria futura).
-- Adicionar `source_excerpt text` (trecho original onde o valor foi extraído — base do "Ver Fonte Original").
-- Nova tabela `source_runs` (telemetria por fonte por busca: `source_id`, `search_id`, `status`, `count`, `took_ms`, `error`) — alimenta o painel de saúde das fontes.
-- Nova tabela `cnpj_cache` (TTL 30 dias): `cnpj`, `razao`, `cnae`, `ativo`, `fetched_at` — evita martelar BrasilAPI.
-
-### 3. Conector Firecrawl
-Conectar via `standard_connectors--connect` com `connector_id: "firecrawl"` (não está conectado ainda — vou disparar o picker). Vai prover `FIRECRAWL_API_KEY` no `process.env` para o `dorking.source.ts`.
-
-### 4. Queries de dorking (exemplos que vão pro Firecrawl)
-- `filetype:pdf "ata de registro de preços" "{termo}" "valor unitário" site:gov.br`
-- `filetype:pdf "termo de homologação" "{termo}" "R$" site:gov.br`
-- `"{termo}" "menor preço" "homologado" site:tce.{uf}.gov.br`
-
-Limit 10 resultados por dork, com `scrapeOptions.formats=['markdown']` pra já vir o conteúdo extraível.
-
-### 5. Cache-first + revalidação em background
-- `search.functions.ts` consulta `quote_searches` por `(query_norm, filters_hash)`.
-- Se `fresh_until > now()` → retorna do cache imediatamente (`fromCache: true`).
-- Se `stale` → retorna cache **e** dispara fan-out novo em background via rota `/api/public/hooks/revalidate-search` (chamada via `fetch` no próprio handler, sem aguardar).
-- Se não existe → fan-out síncrono e persiste.
-
-### 6. Agregador resiliente
-```ts
-const results = await Promise.allSettled(
-  sources.map(s => withTimeout(s.search(q, signal), 15_000))
-);
-// telemetria por fonte vai pra source_runs, payload pra quote_items
-```
-Fonte que falhar **não derruba a busca** — só aparece com `status: "error"` no `sources[]`.
-
-### 7. Validação defensiva (mantém o pncp-rules.ts existente)
-Toda fonte passa pelo mesmo pipeline:
-1. `normalize()` para `PriceResult`
-2. `pncp-rules.detectValorTipo()` — se vier "global" sem unitário → marca pra re-extração (Self-Healing fica pra rodada 2, mas o marcador já é gravado).
-3. `enrichCNPJ()` se tiver CNPJ → joga `cnpj_cache`.
-
-## Fora de escopo desta rodada (próximas etapas)
-
-- Self-Healing loop com Lovable AI (rodada 2)
-- pgvector + RAG de feedback (rodada 3)
-- Botão "Ver Fonte Original" com highlight visual no PDF (rodada 4) — mas **já gravo `source_excerpt`** pra rodada 4 só precisar renderizar
-- Scraping de agregadores privados (M2A, BLL, LicitaNet) — depende de avaliar se Firecrawl supera o bloqueio
-
-## Riscos conhecidos
-
-- **APIs de TCE são instáveis e variam por estado.** Vou começar só com TCE-CE (mais documentado) e deixar TCE-SP/MG como stub que retorna `[]` até validar manualmente o endpoint. Não quero inventar URLs.
-- **Firecrawl consome créditos.** Cada dork = 1 search + N scrapes. Vou limitar a 2 dorks × 10 resultados = ~20 créditos por busca não-cacheada. Cache de 24h reduz drasticamente.
-- **Cloudflare Worker tem timeout.** Fan-out paralelo com timeout 15s por fonte e cap total de 25s.
-
-## Detalhes técnicos
-
-- Server functions: `createServerFn` (não Edge Functions Supabase — esta stack é TanStack Start em Worker).
-- Validação de input: Zod (já em uso).
-- Tipos compartilhados: `PriceResult` em `src/lib/types.ts` já cobre tudo.
-- Logs: `console.log` estruturado por fonte → visível em `server-function-logs`.
-- Sem rate-limiting custom (não é primitivo do backend ainda) — confio em Firecrawl + cache do DB.
-
-## Plano de execução
-
-1. Conectar Firecrawl (picker interativo)
-2. Migração do schema (`source_runs`, `cnpj_cache`, colunas novas)
-3. Refatorar `search.functions.ts` para usar o registry `src/lib/sources/`
-4. Implementar `pncp.source.ts` (extrair do existente, sem mudar lógica)
-5. Implementar `tce-ce.source.ts`
-6. Implementar `dorking.source.ts` (Firecrawl)
-7. Implementar `enrich/cnpj.ts` (BrasilAPI)
-8. Wire-up no agregador + telemetria em `source_runs`
-9. Smoke-test via `invoke-server-function` em produção
+Sigo com a **Rodada A** agora (migração + `triad.ts` + wire + badge no card). As rodadas B–F ficam pra mensagens seguintes, uma por vez, pra você poder testar a cada passo.

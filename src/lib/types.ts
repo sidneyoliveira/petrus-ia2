@@ -41,6 +41,24 @@ export interface PriceResult {
   scoreGeografico: number;
   scoreTecnico: number;
   scoreFinal: number;
+  /**
+   * Título canônico curto do item (separado da `descricao` técnica).
+   * Quando ausente, a UI cai para `titulo`.
+   */
+  objetoEstruturado?: string;
+  /** Resultado da validação aritmética Qtd × Unitário = Total. */
+  mathStatus?: "ok" | "divergente" | "incompleto" | "single_value";
+  /** Classificação da extração: tríade_ok / sem_qtd / sem_unitário / só_global / lixo. */
+  extractionQuality?:
+    | "tríade_ok"
+    | "sem_qtd"
+    | "sem_unitário"
+    | "só_global"
+    | "lixo";
+  /** Total recalculado (qtd × unitário) — pode diferir de valorTotal. */
+  valorTotalCalculado?: number | null;
+  /** Divergência relativa |total - calc|/total (0..1). */
+  mathDeltaPct?: number | null;
 }
 
 export interface SearchFilters {
