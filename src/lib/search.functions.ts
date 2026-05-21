@@ -347,19 +347,25 @@ export const searchPrices = createServerFn({ method: "POST" })
     const pagina = data.pagina ?? 1;
     const ultimosMeses = data.ultimosMeses ?? 12;
 
-    // Busca paralela em múltiplas fontes oficiais
-    const settled = await Promise.allSettled([
-      fetchPNCP(data.query, pagina),
-      fetchComprasGov(data.query),
-      fetchTransparencia(data.query),
-    ]);
+    // 1) Expansão inteligente da consulta (sinônimos via IA)
+    const variants = await expandQuery(data.query, apiKey);
+
+    // 2) Busca paralela em múltiplas fontes oficiais + variações + Firecrawl (se habilitado)
+    const tasks: Promise<RawItem[]>[] = [];
+    for (const v of variants) {
+      tasks.push(fetchPNCP(v, pagina));
+      tasks.push(fetchComprasGov(v));
+      tasks.push(fetchTransparencia(v));
+    }
+    tasks.push(fetchFirecrawlWeb(data.query));
+    const settled = await Promise.allSettled(tasks);
     const raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
     let results = raw.map(toResult);
 
-    // Deduplicação por id+titulo (fontes podem retornar os mesmos documentos)
+    // Deduplicação cruzada por URL/título
     const seen = new Set<string>();
     results = results.filter((r) => {
-      const k = `${r.origem}|${r.id}|${r.titulo}`.toLowerCase();
+      const k = (r.url || `${r.origem}|${r.titulo}`).toLowerCase();
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
@@ -374,6 +380,7 @@ export const searchPrices = createServerFn({ method: "POST" })
     // Filtros básicos
     if (data.uf) results = results.filter((r) => (r.uf ?? "").toUpperCase() === data.uf!.toUpperCase());
     if (data.modalidade) results = results.filter((r) => (r.modalidade ?? "").toLowerCase().includes(data.modalidade!.toLowerCase()));
+    if (data.unidade) results = results.filter((r) => (r.unidade ?? "").toLowerCase().includes(data.unidade!.toLowerCase()));
     if (data.apenasHomologados) results = results.filter((r) => r.homologado);
     if (typeof data.valorMin === "number") results = results.filter((r) => (r.valor ?? 0) >= data.valorMin!);
     if (typeof data.valorMax === "number") results = results.filter((r) => (r.valor ?? Infinity) <= data.valorMax!);
