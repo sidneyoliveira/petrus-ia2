@@ -28,6 +28,12 @@ export interface PriceResult {
   origem: string;
   documento?: "edital" | "ata" | "contrato" | "outro";
   url?: string;
+  /**
+   * Trecho-fonte (até ~1000 chars) usado para destacar o conteúdo no documento
+   * original quando o usuário clica em "Ver Fonte com Destaque". Em geral espelha
+   * `descricao`, mas pode ser refinado por pipelines posteriores.
+   */
+  sourceExcerpt?: string;
   homologado: boolean;
   scoreTextual: number;
   scoreSemantico: number;
