@@ -36,11 +36,16 @@ function Buscar() {
   const [filters, setFilters] = useState({
     uf: "" as string,
     modalidade: "",
+    unidade: "",
     apenasHomologados: false,
-    ultimosMeses: 12,
     onlyValor: false,
     minScore: 0,
+    valorMin: "" as string,
+    valorMax: "" as string,
   });
+  const [sortBy, setSortBy] = useState<
+    "compat" | "semantico" | "juridico" | "valorAsc" | "valorDesc" | "valorMedio" | "dataRecente"
+  >("compat");
   const [opened, setOpened] = useState<PriceResult | null>(null);
   const [saved, setSaved] = useState<Set<string>>(new Set());
   const [visible, setVisible] = useState(12);
@@ -70,15 +75,50 @@ function Buscar() {
 
   const filtered = useMemo(() => {
     if (!data?.results) return [];
-    return data.results.filter((r) => {
+    const vMin = filters.valorMin ? Number(filters.valorMin.replace(",", ".")) : null;
+    const vMax = filters.valorMax ? Number(filters.valorMax.replace(",", ".")) : null;
+    let arr = data.results.filter((r) => {
       if (filters.uf && (r.uf ?? "").toUpperCase() !== filters.uf) return false;
       if (filters.modalidade && !(r.modalidade ?? "").toLowerCase().includes(filters.modalidade.toLowerCase())) return false;
+      if (filters.unidade && !(r.unidade ?? "").toLowerCase().includes(filters.unidade.toLowerCase())) return false;
       if (filters.apenasHomologados && !r.homologado) return false;
       if (filters.onlyValor && typeof r.valor !== "number") return false;
+      if (vMin !== null && !Number.isNaN(vMin) && (r.valor ?? -Infinity) < vMin) return false;
+      if (vMax !== null && !Number.isNaN(vMax) && (r.valor ?? Infinity) > vMax) return false;
       if (r.scoreFinal * 100 < filters.minScore) return false;
       return true;
     });
-  }, [data, filters]);
+
+    // Ordenação configurável
+    const withValor = arr.filter((r) => typeof r.valor === "number") as (PriceResult & { valor: number })[];
+    const media = withValor.length
+      ? withValor.reduce((s, r) => s + r.valor, 0) / withValor.length
+      : 0;
+    const propMid = vMin !== null && vMax !== null && !Number.isNaN(vMin) && !Number.isNaN(vMax) ? (vMin + vMax) / 2 : media;
+
+    arr = [...arr].sort((a, b) => {
+      switch (sortBy) {
+        case "semantico": return b.scoreSemantico - a.scoreSemantico;
+        case "juridico": return b.scoreJuridico - a.scoreJuridico;
+        case "valorAsc": return (a.valor ?? Infinity) - (b.valor ?? Infinity);
+        case "valorDesc": return (b.valor ?? -Infinity) - (a.valor ?? -Infinity);
+        case "valorMedio": {
+          const da = typeof a.valor === "number" ? Math.abs(a.valor - propMid) : Infinity;
+          const db = typeof b.valor === "number" ? Math.abs(b.valor - propMid) : Infinity;
+          return da - db;
+        }
+        case "dataRecente": {
+          const ta = a.data ? new Date(a.data).getTime() : 0;
+          const tb = b.data ? new Date(b.data).getTime() : 0;
+          return tb - ta;
+        }
+        case "compat":
+        default:
+          return b.scoreFinal - a.scoreFinal;
+      }
+    });
+    return arr;
+  }, [data, filters, sortBy]);
 
   // Infinite scroll
   useEffect(() => {
@@ -160,6 +200,24 @@ function Buscar() {
           {/* Filters */}
           <aside className="space-y-6">
             <div className="rounded-xl border border-border bg-card p-5 shadow-card sticky top-20">
+              {/* Ordenação */}
+              <div className="mb-5">
+                <label className="text-xs text-muted-foreground mb-1.5 block">Ordenar por</label>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                  className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="compat">Maior compatibilidade</option>
+                  <option value="semantico">Mais similares (semântico)</option>
+                  <option value="juridico">Maior conformidade jurídica</option>
+                  <option value="valorMedio">Mais próximos do valor médio</option>
+                  <option value="valorAsc">Menor valor</option>
+                  <option value="valorDesc">Maior valor</option>
+                  <option value="dataRecente">Mais recentes</option>
+                </select>
+              </div>
+
               <div className="flex items-center gap-2 mb-4">
                 <SlidersHorizontal className="h-4 w-4 text-accent" />
                 <div className="font-semibold text-sm">Filtros</div>
@@ -189,14 +247,33 @@ function Buscar() {
                 </div>
 
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1.5 block">Últimos meses</label>
+                  <label className="text-xs text-muted-foreground mb-1.5 block">Unidade</label>
                   <input
-                    type="range" min={1} max={24} step={1}
-                    value={filters.ultimosMeses}
-                    onChange={(e) => setFilters({ ...filters, ultimosMeses: Number(e.target.value) })}
-                    className="w-full accent-accent"
+                    value={filters.unidade}
+                    onChange={(e) => setFilters({ ...filters, unidade: e.target.value })}
+                    placeholder="Ex. UN, CX, KG, PC"
+                    className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring uppercase"
                   />
-                  <div className="text-[11px] text-muted-foreground tabular-nums">{filters.ultimosMeses} mês(es)</div>
+                </div>
+
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1.5 block">Faixa de valor (R$)</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      inputMode="decimal"
+                      value={filters.valorMin}
+                      onChange={(e) => setFilters({ ...filters, valorMin: e.target.value })}
+                      placeholder="Mín."
+                      className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring tabular-nums"
+                    />
+                    <input
+                      inputMode="decimal"
+                      value={filters.valorMax}
+                      onChange={(e) => setFilters({ ...filters, valorMax: e.target.value })}
+                      placeholder="Máx."
+                      className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring tabular-nums"
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -230,7 +307,7 @@ function Buscar() {
                 </label>
 
                 <button
-                  onClick={() => setFilters({ uf: "", modalidade: "", apenasHomologados: false, ultimosMeses: 12, onlyValor: false, minScore: 0 })}
+                  onClick={() => setFilters({ uf: "", modalidade: "", unidade: "", apenasHomologados: false, onlyValor: false, minScore: 0, valorMin: "", valorMax: "" })}
                   className="w-full mt-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-secondary transition-smooth"
                 >
                   Limpar filtros
@@ -278,7 +355,7 @@ function Buscar() {
 
             {filtered.length > 0 && (
               <>
-                <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="flex flex-col gap-3">
                   {filtered.slice(0, visible).map((it) => (
                     <ResultCard
                       key={it.id}
@@ -321,17 +398,18 @@ function EmptyState({ title, desc }: { title: string; desc: string }) {
 
 function ResultsSkeleton() {
   return (
-    <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
-      {Array.from({ length: 6 }).map((_, i) => (
-        <div key={i} className="rounded-xl border border-border bg-card p-5 animate-pulse">
-          <div className="flex gap-2 mb-3">
-            <div className="h-4 w-16 rounded bg-muted" />
-            <div className="h-4 w-20 rounded bg-muted" />
+    <div className="flex flex-col gap-3">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className="rounded-xl border border-border bg-card p-5 animate-pulse flex gap-4">
+          <div className="flex-1 space-y-2">
+            <div className="h-4 w-24 rounded bg-muted" />
+            <div className="h-5 w-3/4 rounded bg-muted" />
+            <div className="h-3 w-1/2 rounded bg-muted" />
           </div>
-          <div className="h-5 w-3/4 rounded bg-muted mb-2" />
-          <div className="h-3 w-full rounded bg-muted mb-1" />
-          <div className="h-3 w-5/6 rounded bg-muted mb-4" />
-          <div className="h-8 w-32 rounded bg-muted" />
+          <div className="w-48 space-y-2">
+            <div className="h-5 w-24 rounded bg-muted" />
+            <div className="h-3 w-full rounded bg-muted" />
+          </div>
         </div>
       ))}
     </div>
