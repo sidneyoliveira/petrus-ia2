@@ -525,6 +525,150 @@ async function fetchTransparencia(query: string): Promise<RawItem[]> {
   }
 }
 
+// ============================================================
+// TCE-CE — API de Dados Abertos do SIM (Sistema de Informação Municipal)
+// ============================================================
+// Retorna ITENS LICITADOS individuais de municípios cearenses já homologados.
+// É a fonte de granularidade mais alta para o Ceará: cada linha é um item
+// (descrição, unidade, quantidade, valor unitário, fornecedor vencedor).
+//
+// Estratégia tolerante: tentamos dois hosts candidatos e duas views.
+// Se nenhuma responder (rede/geo-block), devolve [] silenciosamente.
+const TCE_CE_HOSTS = [
+  "https://api-dados-abertos.tce.ce.gov.br/sim",
+  "https://api.tce.ce.gov.br/index.php/sim/1_0",
+];
+const TCE_CE_VIEWS = ["queryView_dv_itens_licitados", "queryView_dv_contratados"];
+
+interface TCECERow {
+  // nomes alternativos cobrindo as duas views — só os que existirem são usados
+  id_item?: string | number;
+  descricao_item?: string;
+  objeto?: string;
+  unidade_medida?: string;
+  unidade?: string;
+  quantidade?: number | string;
+  quantidade_homologada?: number | string;
+  valor_unitario?: number | string;
+  valor_unitario_homologado?: number | string;
+  valor_total?: number | string;
+  valor_total_homologado?: number | string;
+  nome_fornecedor?: string;
+  razao_social_fornecedor?: string;
+  cnpj_fornecedor?: string;
+  cpf_cnpj_fornecedor?: string;
+  nome_municipio?: string;
+  municipio?: string;
+  nome_orgao?: string;
+  orgao?: string;
+  cnpj_orgao?: string;
+  numero_procedimento?: string | number;
+  numero_licitacao?: string | number;
+  ano_exercicio?: string | number;
+  data_homologacao?: string;
+  data?: string;
+  modalidade?: string;
+  [k: string]: unknown;
+}
+
+function numFromBR(v: unknown): number | undefined {
+  if (typeof v === "number" && Number.isFinite(v)) return v > 0 ? v : undefined;
+  if (typeof v !== "string") return undefined;
+  const cleaned = v.trim().replace(/\s/g, "").replace(/\.(?=\d{3}(?:[.,]|$))/g, "").replace(",", ".");
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+async function fetchTceCeView(host: string, view: string, query: string): Promise<TCECERow[]> {
+  // Parametros heurísticos: tentamos `descricao_item` como filtro de texto.
+  // Algumas instâncias usam `q` ou `objeto` — incluímos os dois.
+  const params = new URLSearchParams({
+    descricao_item: query,
+    objeto: query,
+    q: query,
+    limit: "30",
+  });
+  const url = `${host}/${view}?${params.toString()}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10_000);
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return [];
+    const j = (await res.json().catch(() => null)) as unknown;
+    if (Array.isArray(j)) return j as TCECERow[];
+    if (j && typeof j === "object") {
+      const obj = j as Record<string, unknown>;
+      for (const key of ["data", "items", "resultados", "rows", "result"]) {
+        const arr = obj[key];
+        if (Array.isArray(arr)) return arr as TCECERow[];
+      }
+    }
+    return [];
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchTCECE(query: string): Promise<RawItem[]> {
+  const tasks: Promise<TCECERow[]>[] = [];
+  for (const host of TCE_CE_HOSTS) {
+    for (const view of TCE_CE_VIEWS) {
+      tasks.push(fetchTceCeView(host, view, query));
+    }
+  }
+  const settled = await Promise.allSettled(tasks);
+  const rows: TCECERow[] = [];
+  for (const s of settled) {
+    if (s.status === "fulfilled") rows.push(...s.value);
+    if (rows.length >= 120) break;
+  }
+  return rows.map((row, i): RawItem => {
+    const descricao = (row.descricao_item ?? row.objeto ?? "").toString().trim();
+    const unidade = (row.unidade_medida ?? row.unidade ?? "").toString().trim() || undefined;
+    const qtd = numFromBR(row.quantidade_homologada ?? row.quantidade);
+    const valUnit = numFromBR(row.valor_unitario_homologado ?? row.valor_unitario);
+    const valTotal = numFromBR(row.valor_total_homologado ?? row.valor_total) ?? (qtd && valUnit ? qtd * valUnit : undefined);
+    const fornecedor = (row.razao_social_fornecedor ?? row.nome_fornecedor ?? "").toString().trim() || undefined;
+    const cnpjForn = (row.cpf_cnpj_fornecedor ?? row.cnpj_fornecedor ?? "").toString().replace(/\D/g, "");
+    const orgao = (row.nome_orgao ?? row.orgao ?? row.nome_municipio ?? row.municipio ?? "").toString().trim() || undefined;
+    const cnpjOrgao = (row.cnpj_orgao ?? "").toString().replace(/\D/g, "") || undefined;
+    const municipio = (row.nome_municipio ?? row.municipio ?? "").toString().trim() || undefined;
+    const numero = row.numero_procedimento ?? row.numero_licitacao;
+    const ano = row.ano_exercicio;
+    const data = (row.data_homologacao ?? row.data ?? "").toString();
+    return {
+      id: `tce-ce-${row.id_item ?? `${ano ?? ""}-${numero ?? ""}-${i}`}`,
+      objeto_compra: descricao || undefined,
+      descricao: descricao || undefined,
+      unidade_medida: unidade,
+      quantidade: qtd,
+      valor_unitario_homologado: valUnit,
+      valor_unitario: valUnit,
+      valor_total_item: valTotal,
+      fornecedor: fornecedor ?? (cnpjForn ? `CNPJ ${cnpjForn}` : undefined),
+      orgao_nome: orgao,
+      orgao_cnpj: cnpjOrgao,
+      municipio_nome: municipio,
+      uf: "CE",
+      numero: numero ? String(numero) : undefined,
+      ano: ano ? String(ano) : undefined,
+      data_publicacao_pncp: data,
+      modalidade_licitacao_nome: typeof row.modalidade === "string" ? row.modalidade : undefined,
+      situacao_nome: "Homologado",
+      tipo_documento: "ata",
+      _source: "TCE-CE",
+      _sourceName: "TCE-CE",
+      _sourceDomain: "api-dados-abertos.tce.ce.gov.br",
+      _valorTipo: valUnit ? "unitario_homologado" : "desconhecido",
+    } as RawItem;
+  }).filter((r) => Boolean(r.descricao || r.objeto_compra));
+}
+
 // Expansão inteligente de consulta: gera variações sinônimas via Lovable AI.
 // Falha silenciosamente — devolve apenas a query original em caso de erro.
 async function expandQuery(query: string, apiKey: string | undefined): Promise<string[]> {
@@ -743,6 +887,11 @@ async function registerDiscoveredDomains(urls: string[], known: Set<string>) {
 
 // Constrói a URL absoluta da página oficial do PNCP a partir dos campos do item.
 function buildPncpUrl(raw: RawItem): string | undefined {
+  // Fontes não-PNCP (TCE-CE, fornecedores, web): preserva url original ou nada.
+  if (raw._source && raw._source !== "PNCP" && raw._source !== "Transparência" && raw._source !== "Compras.gov.br") {
+    const u = (raw.url as string | undefined) || (raw.item_url as string | undefined);
+    return u && /^https?:\/\//i.test(u) ? u : undefined;
+  }
   const tipo = (raw.tipo_documento ?? "").toLowerCase();
   const path = (raw.item_url as string | undefined) || (raw.url as string | undefined);
   if (path && /^https?:\/\//i.test(path)) return path;
@@ -954,6 +1103,8 @@ export const searchPrices = createServerFn({ method: "POST" })
       tasks.push(fetchPNCP(v, pagina + 2, 50));
       tasks.push(fetchComprasGov(v));
       tasks.push(fetchTransparencia(v));
+      // TCE-CE: itens já homologados de municípios cearenses (granular nato)
+      tasks.push(fetchTCECE(v));
     }
     // Firecrawl — chama com vários conjuntos de domínios para diversificar
     const tceDomains = catalog.filter((s) => s.domain.startsWith("tce.")).map((s) => s.domain);
