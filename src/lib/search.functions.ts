@@ -109,6 +109,25 @@ function looksLikeProcessObject(text: string): boolean {
   return false;
 }
 
+// Detecta strings que são apenas IDENTIFICADORES de processo/ata/contrato
+// (ex.: "nº 20260186 SEMED/2026", "Ata 12/2024", "PCP 3/2026 - Portal...",
+// "Pregão Eletrônico 045/2025"). Esses NUNCA devem virar título do item —
+// servem só como metadado (já temos campos numero/ano).
+function looksLikeProcessNumberTitle(text: string): boolean {
+  if (!text) return true;
+  const t = text.trim();
+  if (t.length < 4) return true;
+  // Padrões: "nº 123456", "n° 12/2024", "Ata 12/2024", "PCP 3/2026 - ..."
+  const re = /^(?:n[º°o.]?\s*)?(?:ata|edital|preg[aã]o(?:\s+eletr[oô]nico)?|pcp|tp|rdc|concorr[eê]ncia|dispensa|inexigibilidade|contrato|processo|empenho)?\s*[nº°.]*\s*\d{1,8}\s*[\/\-]?\s*\d{0,6}(?:\s*[-–]\s*[A-Za-zÀ-ÿ ]{0,40})?$/i;
+  if (re.test(t)) return true;
+  // Só dígitos, barras, hifens, letras de sigla curta
+  if (/^[\d\s\/\-.\u00BA\u00B0nN°º]+$/.test(t)) return true;
+  // Predominantemente dígitos (>= 50%) e curto
+  const digits = (t.match(/\d/g) ?? []).length;
+  if (t.length <= 40 && digits / t.length >= 0.4) return true;
+  return false;
+}
+
 function tokenize(s: string): string[] {
   return (s || "")
     .toLowerCase()
@@ -555,18 +574,37 @@ function buildPncpUrl(raw: RawItem): string | undefined {
 }
 
 function toResult(raw: RawItem): PriceResult {
-  // Título do ITEM (objeto da contratação) tem prioridade sobre o nome do processo.
+  // Título do ITEM (descrição do objeto comprado) tem prioridade ABSOLUTA
+  // sobre o nome/número do processo. O PNCP costuma retornar o número da
+  // contratação em `title` (ex.: "nº 20260186 SEMED/2026") — isso é
+  // metadado, não descrição do item.
   const objetoRaw = (raw.objeto_compra || raw.descricao || raw.description || "").toString().trim();
   const processoRaw = (raw.title || "").toString().trim();
   const objeto = cleanItemTitle(objetoRaw);
   const processo = cleanItemTitle(processoRaw);
-  // Prefere o mais curto e específico — descrições longas são quase sempre
-  // blocos de texto extraídos de PDFs (preâmbulo + cláusulas).
-  const candidates = [objeto, processo].filter((s) => s && s !== "Sem título");
-  candidates.sort((a, b) => a.length - b.length);
-  const titulo = candidates[0] || "Sem título";
+
+  // Pontua qualidade de cada candidato: descrição real ganha sobre número.
+  const score = (s: string): number => {
+    if (!s || s === "Sem título") return -1;
+    if (looksLikeProcessNumberTitle(s)) return 0;
+    let q = 1;
+    if (s.length >= 20 && s.length <= 160) q += 2;
+    if (/[a-zà-ÿ]{4,}/i.test(s)) q += 1; // tem palavra real
+    if (looksLikeRawDocumentText(s)) q -= 1;
+    return q;
+  };
+  const ranked = [
+    { s: objeto, q: score(objeto), src: "objeto" as const },
+    { s: processo, q: score(processo), src: "processo" as const },
+  ]
+    .filter((c) => c.s)
+    .sort((a, b) => b.q - a.q || a.s.length - b.s.length);
+
+  const titulo = ranked[0]?.s || "Sem título";
   const subtitulo =
-    candidates.length > 1 && candidates[1] !== titulo ? candidates[1] : undefined;
+    ranked[1] && ranked[1].s && ranked[1].s !== titulo && ranked[1].q >= 0
+      ? ranked[1].s
+      : undefined;
   const descricao = objetoRaw || processoRaw || titulo;
   // Prioriza valor UNITÁRIO/HOMOLOGADO do item sobre valor total do processo
   const valor =
