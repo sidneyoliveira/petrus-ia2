@@ -25,7 +25,7 @@ export interface PriceResult {
   situacao?: string;
   numero?: string;
   ano?: string;
-  origem: "PNCP" | "Compras.gov.br" | "Transparência" | "Outro";
+  origem: string;
   documento?: "edital" | "ata" | "contrato" | "outro";
   url?: string;
   homologado: boolean;
@@ -50,6 +50,12 @@ export interface SearchFilters {
 
 export type SearchMode = "semantic" | "exact" | "all_keywords";
 
+export interface SearchSourceStatus {
+  name: string;
+  domain?: string;
+  total: number;
+}
+
 export interface SearchResponse {
   results: PriceResult[];
   total: number;
@@ -57,4 +63,5 @@ export interface SearchResponse {
   pageSize: number;
   query: string;
   tookMs: number;
+  sources?: SearchSourceStatus[];
 }

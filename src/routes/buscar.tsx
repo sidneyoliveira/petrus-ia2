@@ -228,6 +228,9 @@ function Buscar() {
                 </div>
               )}
             </div>
+            {(isFetching || data?.sources?.length) && (
+              <SourceStrip loading={isFetching} sources={data?.sources} />
+            )}
           </div>
         </section>
 
@@ -479,6 +482,37 @@ function ResultsSkeleton() {
             <div className="h-3 w-full rounded bg-muted" />
           </div>
         </div>
+      ))}
+    </div>
+  );
+}
+
+function SourceStrip({
+  loading,
+  sources,
+}: {
+  loading: boolean;
+  sources?: { name: string; domain?: string; total: number }[];
+}) {
+  const fallback = ["PNCP", "Compras.gov.br", "TCE-CE", "TCEs/portais oficiais", "Fornecedores"];
+  const list: { name: string; domain?: string; total: number }[] = sources?.length
+    ? sources
+    : fallback.map((name) => ({ name, total: 0 }));
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+      <span className="inline-flex items-center gap-1 pr-1">
+        {loading && <Loader2 className="h-3 w-3 animate-spin" />}
+        {loading ? "Pesquisando em" : "Fontes consultadas"}
+      </span>
+      {list.map((source) => (
+        <span
+          key={`${source.name}-${source.domain ?? ""}`}
+          className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-0.5"
+          title={source.domain}
+        >
+          {source.name}
+          {source.total > 0 && <span className="tabular-nums text-foreground">{source.total}</span>}
+        </span>
       ))}
     </div>
   );

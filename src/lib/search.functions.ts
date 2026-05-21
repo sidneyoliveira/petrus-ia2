@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import type { PriceResult, SearchResponse } from "./types";
+import type { PriceResult, SearchResponse, SearchSourceStatus } from "./types";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 const FilterSchema = z.object({
@@ -117,6 +117,8 @@ function looksLikeProcessNumberTitle(text: string): boolean {
   if (!text) return true;
   const t = text.trim();
   if (t.length < 4) return true;
+  if (/portal\s+nacional\s+de\s+contrata[cç][oõ]es\s+p[uú]blicas/i.test(t)) return true;
+  if (/^n[º°o.]?\s*(?:pe|pp|preg[aã]o|dispensa|concorr[eê]ncia|edital|ata|contrato|processo)\s*\d+\s*\/\s*\d{4}/i.test(t)) return true;
   // Padrões: "nº 123456", "n° 12/2024", "Ata 12/2024", "PCP 3/2026 - ..."
   const re = /^(?:n[º°o.]?\s*)?(?:ata|edital|preg[aã]o(?:\s+eletr[oô]nico)?|pcp|tp|rdc|concorr[eê]ncia|dispensa|inexigibilidade|contrato|processo|empenho)?\s*[nº°.]*\s*\d{1,8}\s*[\/\-]?\s*\d{0,6}(?:\s*[-–]\s*[A-Za-zÀ-ÿ ]{0,40})?$/i;
   if (re.test(t)) return true;
@@ -225,6 +227,8 @@ interface RawItem {
   /** Marca explicitamente o tipo do valor (preenchido pelo enrichWithPNCPItems). */
   _valorTipo?: PriceResult["valorTipo"];
   _supplier?: boolean;
+  _sourceDomain?: string;
+  _sourceName?: string;
   [k: string]: unknown;
 }
 
@@ -325,22 +329,28 @@ async function fetchPncpItens(
   // A rota antiga /api/consulta/v1 não responde de forma confiável e fazia o sistema manter
   // o processo inteiro como fallback, exatamente o comportamento incorreto reportado.
   const seq = String(Number(String(sequencial).replace(/\D/g, "")) || sequencial);
-  const url = `https://pncp.gov.br/pncp-api/v1/orgaos/${cnpj}/compras/${ano}/${seq}/itens?pagina=1&tamanhoPagina=50`;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 12_000);
-  try {
-    const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
-      signal: ctrl.signal,
-    });
-    if (!res.ok) return [];
-    const j = (await res.json()) as PncpItemRaw[] | { data?: PncpItemRaw[] };
-    return Array.isArray(j) ? j : (j.data ?? []);
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timer);
+  const all: PncpItemRaw[] = [];
+  for (let pagina = 1; pagina <= 5; pagina++) {
+    const url = `https://pncp.gov.br/pncp-api/v1/orgaos/${cnpj}/compras/${ano}/${seq}/itens?pagina=${pagina}&tamanhoPagina=100`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12_000);
+    try {
+      const res = await fetch(url, {
+        headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+        signal: ctrl.signal,
+      });
+      if (!res.ok) break;
+      const j = (await res.json()) as PncpItemRaw[] | { data?: PncpItemRaw[] };
+      const page = Array.isArray(j) ? j : (j.data ?? []);
+      all.push(...page);
+      if (page.length < 100) break;
+    } catch {
+      break;
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  return all;
 }
 
 /**
@@ -560,7 +570,21 @@ async function expandQuery(query: string, apiKey: string | undefined): Promise<s
 
 // Busca aberta via Firecrawl em portais oficiais .gov.br (quando o conector estiver ativo).
 // Caso FIRECRAWL_API_KEY não esteja configurada, retorna [] silenciosamente.
-async function fetchFirecrawlWeb(query: string, siteFilters: string[]): Promise<RawItem[]> {
+function sourceMetaForUrl(url: string | undefined, catalog: { domain: string; name: string }[]) {
+  if (!url) return { domain: undefined, name: undefined };
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    const match = catalog.find((s) => {
+      const domainHost = s.domain.split("/")[0].replace(/^www\./, "");
+      return host === domainHost || host.endsWith(`.${domainHost}`) || domainHost.endsWith(`.${host}`);
+    });
+    return { domain: match?.domain ?? host, name: match?.name ?? host };
+  } catch {
+    return { domain: undefined, name: undefined };
+  }
+}
+
+async function fetchFirecrawlWeb(query: string, siteFilters: string[], catalog: { domain: string; name: string }[] = []): Promise<RawItem[]> {
   const key = process.env.FIRECRAWL_API_KEY;
   if (!key) return [];
   // Constrói consulta com OR de domínios priorizados pelo catálogo (price_sources)
@@ -589,14 +613,19 @@ async function fetchFirecrawlWeb(query: string, siteFilters: string[]): Promise<
     const arr = Array.isArray(json.data)
       ? json.data
       : (json.data?.web ?? json.web ?? []);
-    return arr.map((r, i): RawItem => ({
-      id: `fc-${i}-${(r.url ?? "").slice(-40)}`,
-      title: r.title ?? r.url ?? "Resultado web",
-      description: r.description ?? "",
-      url: r.url,
-      tipo_documento: /ata/i.test(`${r.title} ${r.url}`) ? "ata" : /contrato/i.test(`${r.title} ${r.url}`) ? "contrato" : /edital|pregao|preg%C3%A3o/i.test(`${r.title} ${r.url}`) ? "edital" : "outro",
-      _source: "Outro",
-    }));
+    return arr.map((r, i): RawItem => {
+      const meta = sourceMetaForUrl(r.url, catalog);
+      return {
+        id: `fc-${i}-${(r.url ?? "").slice(-40)}`,
+        title: r.title ?? r.url ?? "Resultado web",
+        description: r.description ?? "",
+        url: r.url,
+        tipo_documento: /ata/i.test(`${r.title} ${r.url}`) ? "ata" : /contrato/i.test(`${r.title} ${r.url}`) ? "contrato" : /edital|pregao|preg%C3%A3o/i.test(`${r.title} ${r.url}`) ? "edital" : "outro",
+        _source: meta.name ?? "Web oficial",
+        _sourceDomain: meta.domain,
+        _sourceName: meta.name,
+      };
+    });
   } catch (e) {
     console.warn("Firecrawl error", (e as Error).message);
     return [];
@@ -655,7 +684,9 @@ async function fetchFirecrawlSuppliers(query: string): Promise<RawItem[]> {
           orgao_nome: host || "Fornecedor",
           valor_unitario: priceNum,
           tipo_documento: "outro",
-          _source: "Outro",
+          _source: host || "Fornecedor",
+          _sourceDomain: host || undefined,
+          _sourceName: host || "Fornecedor",
           _supplier: true,
         } as RawItem;
       });
@@ -728,6 +759,37 @@ function buildPncpUrl(raw: RawItem): string | undefined {
     return `https://pncp.gov.br/app/${seg}/${cnpj}/${ano}/${seq}`;
   }
   return undefined;
+}
+
+function isSupplierOrCommercial(r: PriceResult): boolean {
+  const source = (r.origem || "").toLowerCase();
+  return Boolean(r.fornecedor) && !/(pncp|compras\.gov|transpar|tce|tribunal|gov\.br)/i.test(source);
+}
+
+function isGranularItemResult(r: PriceResult): boolean {
+  const title = r.titulo || "";
+  if (!title || looksLikeProcessNumberTitle(title) || looksLikeProcessObject(title) || looksLikeRawDocumentText(title)) {
+    return false;
+  }
+  if (isSupplierOrCommercial(r)) return true;
+  if (r.valorTipo === "unitario_homologado" || r.valorTipo === "unitario_estimado") return true;
+  return Boolean(r.unidade || r.quantidade || r.valorTotal);
+}
+
+function summarizeSources(results: PriceResult[], catalog: { domain: string; name: string }[]): SearchSourceStatus[] {
+  const base = ["PNCP", "Compras.gov.br", "TCE-CE", ...catalog.slice(0, 8).map((s) => s.name)];
+  const map = new Map<string, SearchSourceStatus>();
+  for (const name of base) {
+    if (!name) continue;
+    map.set(name, { name, domain: catalog.find((s) => s.name === name)?.domain, total: 0 });
+  }
+  for (const r of results) {
+    const name = r.origem || "Outra fonte";
+    const current = map.get(name) ?? { name, total: 0 };
+    current.total += 1;
+    map.set(name, current);
+  }
+  return Array.from(map.values()).filter((s, i) => s.total > 0 || i < 8).slice(0, 12);
 }
 
 function toResult(raw: RawItem): PriceResult {
@@ -833,7 +895,7 @@ function toResult(raw: RawItem): PriceResult {
     situacao,
     numero: raw.numero,
     ano: raw.ano ? String(raw.ano) : undefined,
-    origem: (raw["_source"] as PriceResult["origem"]) || "PNCP",
+    origem: (raw._sourceName || raw["_source"] || "PNCP") as string,
     documento,
     url: buildPncpUrl(raw),
     homologado,
@@ -901,10 +963,10 @@ export const searchPrices = createServerFn({ method: "POST" })
     for (const v of variants.slice(0, 3)) {
       // PNCP público via web: encontra páginas de processos e, em seguida,
       // o enrich transforma essas páginas em ITENS granulares via /itens.
-      tasks.push(fetchFirecrawlWeb(v, ["pncp.gov.br"]));
-      tasks.push(fetchFirecrawlWeb(v, siteFilters));
-      if (tceDomains.length > 0) tasks.push(fetchFirecrawlWeb(v, tceDomains));
-      if (govFederal.length > 0) tasks.push(fetchFirecrawlWeb(v, govFederal));
+      tasks.push(fetchFirecrawlWeb(v, ["pncp.gov.br"], catalog));
+      tasks.push(fetchFirecrawlWeb(v, siteFilters, catalog));
+      if (tceDomains.length > 0) tasks.push(fetchFirecrawlWeb(v, tceDomains, catalog));
+      if (govFederal.length > 0) tasks.push(fetchFirecrawlWeb(v, govFederal, catalog));
       // Cotação com fornecedores reais (catálogos / fabricantes / distribuidores)
       tasks.push(fetchFirecrawlSuppliers(v));
     }
@@ -991,6 +1053,11 @@ export const searchPrices = createServerFn({ method: "POST" })
       const blob = `${r.titulo} ${r.descricao} ${r.url ?? ""}`.toLowerCase();
       return !FORBIDDEN.some((f) => blob.includes(f));
     });
+
+    // Regra central: se há itens granulares disponíveis, remove cards que ainda
+    // representam processo/edital/ata. A lista final deve mostrar itens cotáveis.
+    const granular = results.filter(isGranularItemResult);
+    if (granular.length > 0) results = granular;
 
     // Filtros básicos (UF/modalidade/unidade/homologação/preço):
     // aplicados como SINAIS DE RANQUEAMENTO, não como exclusões duras.
@@ -1105,5 +1172,6 @@ export const searchPrices = createServerFn({ method: "POST" })
       pageSize: 20,
       query: data.query,
       tookMs: Date.now() - t0,
+      sources: summarizeSources(results, catalog),
     };
   });
