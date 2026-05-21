@@ -40,37 +40,39 @@ export const Route = createFileRoute("/api/ocr")({
           return Response.json({ error: "URL inválida" }, { status: 400 });
         }
 
-        let pdfBuffer: ArrayBuffer;
-        try {
-          const res = await fetch(target, {
-            headers: { "User-Agent": "CotacaoIA/1.0" },
-          });
-          if (!res.ok) {
-            return Response.json(
-              { error: `Falha ao baixar PDF (HTTP ${res.status})` },
-              { status: 502 },
-            );
+        // Resolve a URL final do PDF. Se o link for HTML (página do PNCP),
+        // tenta extrair um link de PDF do conteúdo. Se for PDF direto, baixa.
+        async function resolvePdfBytes(initial: string): Promise<{ buf: ArrayBuffer; url: string } | { error: string; status: number }> {
+          try {
+            const res = await fetch(initial, { headers: { "User-Agent": "CotacaoIA/1.0", Accept: "application/pdf, text/html;q=0.5, */*;q=0.1" } });
+            if (!res.ok) return { error: `Falha ao baixar (HTTP ${res.status})`, status: 502 };
+            const ct = (res.headers.get("content-type") || "").toLowerCase();
+            const isPdf = ct.includes("pdf") || initial.toLowerCase().endsWith(".pdf");
+            if (isPdf) {
+              const buf = await res.arrayBuffer();
+              if (buf.byteLength > 15 * 1024 * 1024) return { error: "PDF maior que 15MB", status: 413 };
+              return { buf, url: initial };
+            }
+            // É HTML — tenta extrair link para PDF
+            const html = await res.text();
+            const matches = Array.from(html.matchAll(/href=["']([^"']+\.pdf[^"']*)["']/gi)).map((m) => m[1]);
+            if (matches.length === 0) {
+              return { error: "Este link é uma página HTML e não contém PDF anexo. Abra a fonte original para baixar o arquivo manualmente.", status: 415 };
+            }
+            const abs = new URL(matches[0], initial).toString();
+            const r2 = await fetch(abs, { headers: { "User-Agent": "CotacaoIA/1.0", Accept: "application/pdf" } });
+            if (!r2.ok) return { error: `Falha ao baixar PDF anexo (HTTP ${r2.status})`, status: 502 };
+            const buf = await r2.arrayBuffer();
+            if (buf.byteLength > 15 * 1024 * 1024) return { error: "PDF maior que 15MB", status: 413 };
+            return { buf, url: abs };
+          } catch (e) {
+            return { error: `Erro de rede: ${(e as Error).message}`, status: 502 };
           }
-          const ct = res.headers.get("content-type") || "";
-          if (!ct.includes("pdf") && !target.toLowerCase().endsWith(".pdf")) {
-            return Response.json(
-              { error: "O recurso não é um PDF" },
-              { status: 415 },
-            );
-          }
-          pdfBuffer = await res.arrayBuffer();
-          if (pdfBuffer.byteLength > 15 * 1024 * 1024) {
-            return Response.json(
-              { error: "PDF maior que 15MB" },
-              { status: 413 },
-            );
-          }
-        } catch (e) {
-          return Response.json(
-            { error: `Erro de rede: ${(e as Error).message}` },
-            { status: 502 },
-          );
         }
+
+        const got = await resolvePdfBytes(target);
+        if ("error" in got) return Response.json({ error: got.error }, { status: got.status });
+        const pdfBuffer = got.buf;
 
         try {
           const { extractText, getDocumentProxy } = await import("unpdf");
@@ -81,6 +83,7 @@ export const Route = createFileRoute("/api/ocr")({
             ok: true,
             pages: totalPages,
             chars: full.length,
+            sourceUrl: got.url,
             text: full.slice(0, 60000),
             truncated: full.length > 60000,
           });
