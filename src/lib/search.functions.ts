@@ -1098,6 +1098,8 @@ export const searchPrices = createServerFn({ method: "POST" })
       tasks.push(fetchPNCP(v, pagina + 2, 50));
       tasks.push(fetchComprasGov(v));
       tasks.push(fetchTransparencia(v));
+      // TCE-CE: itens já homologados de municípios cearenses (granular nato)
+      tasks.push(fetchTCECE(v));
     }
     // Firecrawl — chama com vários conjuntos de domínios para diversificar
     const tceDomains = catalog.filter((s) => s.domain.startsWith("tce.")).map((s) => s.domain);
