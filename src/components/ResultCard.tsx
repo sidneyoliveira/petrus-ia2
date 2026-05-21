@@ -60,102 +60,104 @@ export function ResultCard({ item, onOpen, onSave, saved, query }: Props) {
     }
   };
   return (
-    <article className="group relative rounded-xl border border-border bg-card shadow-card transition-smooth hover:-translate-y-0.5 hover:shadow-elegant overflow-hidden">
-      <div className="p-5">
-        <div className="flex items-start justify-between gap-3 mb-3">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-primary">
-              {item.origem}
-            </span>
-            {item.documento && item.documento !== "outro" && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-secondary-foreground">
-                {item.documento}
+    <article className="group relative rounded-xl border border-border bg-card hover:border-accent/40 hover:bg-card/80 transition-colors overflow-hidden">
+      <div className="flex flex-col md:flex-row md:items-stretch">
+        {/* Bloco principal: título + metadados */}
+        <div className="flex-1 min-w-0 p-4 md:p-5">
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-primary">
+                {item.origem}
               </span>
-            )}
-            {item.homologado && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-gold/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gold">
-                <Award className="h-3 w-3" /> Homologado
-              </span>
-            )}
+              {item.documento && item.documento !== "outro" && (
+                <span className="inline-flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-secondary-foreground">
+                  {item.documento}
+                </span>
+              )}
+              {item.homologado && (
+                <span className="inline-flex items-center gap-1 rounded-md bg-gold/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gold">
+                  <Award className="h-3 w-3" /> Homologado
+                </span>
+              )}
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); onSave?.(item); }}
+              aria-label="Salvar"
+              className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border ${
+                saved ? "bg-accent text-accent-foreground" : "bg-background hover:bg-secondary"
+              }`}
+            >
+              <Bookmark className="h-3.5 w-3.5" fill={saved ? "currentColor" : "none"} />
+            </button>
           </div>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onSave?.(item);
-            }}
-            aria-label="Salvar"
-            className={`inline-flex h-7 w-7 items-center justify-center rounded-md border border-border transition-smooth ${
-              saved ? "bg-accent text-accent-foreground" : "bg-background hover:bg-secondary"
-            }`}
-          >
-            <Bookmark className="h-3.5 w-3.5" fill={saved ? "currentColor" : "none"} />
+
+          <button onClick={() => onOpen(item)} className="text-left w-full">
+            <h3 className="font-semibold text-base leading-snug text-balance line-clamp-2 group-hover:text-primary">
+              {item.titulo}
+            </h3>
           </button>
-        </div>
-
-        <button onClick={() => onOpen(item)} className="text-left w-full">
-          <h3 className="font-semibold leading-snug text-balance line-clamp-2 group-hover:text-primary transition-smooth">
-            {item.titulo}
-          </h3>
-        </button>
-        <p className="mt-1.5 text-sm text-muted-foreground line-clamp-2 leading-relaxed">
-          {item.descricao}
-        </p>
-
-        <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-          {item.orgao && (
-            <div className="flex items-center gap-1.5 min-w-0">
-              <Building2 className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate" title={item.orgao}>{item.orgao}</span>
+          {item.subtitulo && (
+            <div className="mt-1 text-[11px] uppercase tracking-wider text-muted-foreground truncate" title={item.subtitulo}>
+              {item.subtitulo}
             </div>
           )}
-          {(item.municipio || item.uf) && (
-            <div className="flex items-center gap-1.5">
-              <MapPin className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{[item.municipio, item.uf].filter(Boolean).join(" / ")}</span>
-            </div>
-          )}
-          {item.data && (
-            <div className="flex items-center gap-1.5">
-              <Calendar className="h-3.5 w-3.5 shrink-0" />
-              <span>{fmtDate(item.data)}</span>
-            </div>
-          )}
-          {item.modalidade && (
-            <div className="flex items-center gap-1.5">
-              <Tag className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{item.modalidade}</span>
-            </div>
-          )}
-        </div>
 
-        {item.cnpj && (
-          <div className="mt-2 text-[11px] text-muted-foreground font-mono">
-            CNPJ {fmtCNPJ(item.cnpj)}
-          </div>
-        )}
-
-        <div className="mt-4 flex items-end justify-between gap-3">
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Valor</div>
-            <div className="text-lg font-semibold tabular-nums">{brl(item.valor)}</div>
-          </div>
-          <div className="text-right">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Compatibilidade</div>
-            <div className="text-lg font-bold text-accent tabular-nums">
-              {Math.round(item.scoreFinal * 100)}%
-            </div>
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+            {item.orgao && (
+              <span className="inline-flex items-center gap-1.5 min-w-0 max-w-[28rem]">
+                <Building2 className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate" title={item.orgao}>{item.orgao}</span>
+              </span>
+            )}
+            {(item.municipio || item.uf) && (
+              <span className="inline-flex items-center gap-1.5">
+                <MapPin className="h-3.5 w-3.5 shrink-0" />
+                <span>{[item.municipio, item.uf].filter(Boolean).join(" / ")}</span>
+              </span>
+            )}
+            {item.data && (
+              <span className="inline-flex items-center gap-1.5">
+                <Calendar className="h-3.5 w-3.5 shrink-0" />
+                <span>{fmtDate(item.data)}</span>
+              </span>
+            )}
+            {item.modalidade && (
+              <span className="inline-flex items-center gap-1.5">
+                <Tag className="h-3.5 w-3.5 shrink-0" />
+                <span>{item.modalidade}</span>
+              </span>
+            )}
+            {item.unidade && (
+              <span className="text-muted-foreground">Un.: <span className="text-foreground">{item.unidade}</span></span>
+            )}
+            {item.cnpj && (
+              <span className="font-mono text-[11px]">CNPJ {fmtCNPJ(item.cnpj)}</span>
+            )}
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 pt-3 border-t border-border/60">
-          <ScoreBar label="Semântico" value={item.scoreSemantico} tone="accent" />
-          <ScoreBar label="Jurídico" value={item.scoreJuridico} tone="primary" />
-          <ScoreBar label="Textual" value={item.scoreTextual} tone="primary" />
-          <ScoreBar label="Técnico" value={item.scoreTecnico} tone="success" />
+        {/* Bloco lateral: valor + compatibilidade + scores compactos */}
+        <div className="border-t md:border-t-0 md:border-l border-border/60 bg-secondary/20 md:w-[320px] shrink-0 p-4 md:p-5 flex flex-col gap-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Valor</div>
+              <div className="text-lg font-semibold tabular-nums">{brl(item.valor)}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Compat.</div>
+              <div className="text-lg font-bold text-accent tabular-nums">{Math.round(item.scoreFinal * 100)}%</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+            <ScoreBar label="Sem." value={item.scoreSemantico} tone="accent" />
+            <ScoreBar label="Jur." value={item.scoreJuridico} tone="primary" />
+            <ScoreBar label="Txt." value={item.scoreTextual} tone="primary" />
+            <ScoreBar label="Téc." value={item.scoreTecnico} tone="success" />
+          </div>
         </div>
       </div>
 
-      <div className="px-5 py-3 border-t border-border/60 bg-secondary/30 flex items-center justify-between">
+      <div className="px-4 md:px-5 py-2.5 border-t border-border/60 bg-card flex items-center justify-between">
         <button onClick={() => onOpen(item)} className="text-xs font-medium text-primary hover:underline">
           Ver detalhes
         </button>
@@ -164,7 +166,7 @@ export function ResultCard({ item, onOpen, onSave, saved, query }: Props) {
             onClick={() => handleFeedback("accept")}
             disabled={!!feedback || sending}
             title="Marcar como útil — ajuda a IA a aprender"
-            className={`inline-flex h-7 w-7 items-center justify-center rounded-md border border-border transition-smooth disabled:opacity-60 ${
+            className={`inline-flex h-7 w-7 items-center justify-center rounded-md border border-border disabled:opacity-60 ${
               feedback === "accept" ? "bg-success/15 text-success border-success/40" : "hover:bg-secondary"
             }`}
           >
@@ -174,7 +176,7 @@ export function ResultCard({ item, onOpen, onSave, saved, query }: Props) {
             onClick={() => handleFeedback("reject")}
             disabled={!!feedback || sending}
             title="Não compatível — IA aprende a descartar"
-            className={`inline-flex h-7 w-7 items-center justify-center rounded-md border border-border transition-smooth disabled:opacity-60 ${
+            className={`inline-flex h-7 w-7 items-center justify-center rounded-md border border-border disabled:opacity-60 ${
               feedback === "reject" ? "bg-destructive/15 text-destructive border-destructive/40" : "hover:bg-secondary"
             }`}
           >
@@ -185,7 +187,7 @@ export function ResultCard({ item, onOpen, onSave, saved, query }: Props) {
               href={item.url}
               target="_blank"
               rel="noreferrer noopener"
-              className="ml-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-smooth"
+              className="ml-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
             >
               Fonte <ExternalLink className="h-3 w-3" />
             </a>
