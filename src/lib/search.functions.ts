@@ -504,14 +504,32 @@ function toResult(raw: RawItem): PriceResult {
         : "outro";
   const id = String(raw.id ?? `${raw.numero ?? ""}-${raw.ano ?? ""}-${Math.random().toString(36).slice(2, 8)}`);
 
+  // Tipo de valor — preferência ao já marcado pelo enrich
+  const valorTipo: PriceResult["valorTipo"] =
+    raw._valorTipo ??
+    (typeof raw.valor_unitario_homologado === "number"
+      ? "unitario_homologado"
+      : typeof raw.valor_unitario_estimado === "number" || typeof raw.valor_unitario === "number"
+        ? "unitario_estimado"
+        : typeof raw.valor_global === "number" || typeof raw.valorTotalEstimado === "number"
+          ? "global"
+          : "desconhecido");
+
   return {
     id,
     titulo: String(titulo),
     subtitulo,
     descricao: String(descricao),
     unidade: raw.unidade_medida,
+    quantidade: typeof raw.quantidade === "number" ? raw.quantidade : null,
     valor,
-    valorTotal: valor,
+    valorTotal:
+      typeof raw.valor_global === "number"
+        ? raw.valor_global
+        : typeof raw.valorTotalEstimado === "number"
+          ? raw.valorTotalEstimado
+          : valor,
+    valorTipo,
     fornecedor: undefined,
     orgao: raw.orgao_nome,
     cnpj: raw.orgao_cnpj,
