@@ -418,7 +418,16 @@ export const searchPrices = createServerFn({ method: "POST" })
     const ultimosMeses = data.ultimosMeses ?? 12;
 
     // 1) Expansão inteligente da consulta (sinônimos via IA)
-    const variants = await expandQuery(data.query, apiKey);
+    const mode = data.mode ?? "semantic";
+    const variants =
+      mode === "exact"
+        ? [data.query]
+        : await expandQuery(data.query, apiKey);
+
+    // 1b) Catálogo dinâmico de fontes para Firecrawl
+    const catalog = await loadActiveSources();
+    const knownDomains = new Set(catalog.map((s) => s.domain));
+    const siteFilters = catalog.map((s) => s.domain);
 
     // 2) Busca paralela em múltiplas fontes oficiais + variações + Firecrawl (se habilitado)
     const tasks: Promise<RawItem[]>[] = [];
@@ -427,10 +436,43 @@ export const searchPrices = createServerFn({ method: "POST" })
       tasks.push(fetchComprasGov(v));
       tasks.push(fetchTransparencia(v));
     }
-    tasks.push(fetchFirecrawlWeb(data.query));
+    tasks.push(fetchFirecrawlWeb(data.query, siteFilters));
+    // chama Firecrawl 2x — uma com filtros gov.br federal, outra com TCEs
+    const tceDomains = catalog.filter((s) => s.domain.startsWith("tce.")).map((s) => s.domain);
+    if (tceDomains.length > 0) tasks.push(fetchFirecrawlWeb(data.query, tceDomains));
     const settled = await Promise.allSettled(tasks);
     const raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
     let results = raw.map(toResult);
+
+    // Auto-descoberta: registra novos domínios encontrados pelo Firecrawl
+    void registerDiscoveredDomains(
+      results.map((r) => r.url ?? "").filter(Boolean),
+      knownDomains,
+    );
+
+    // Filtra resultados que misturam vários itens distintos no mesmo registro
+    results = results.filter((r) => !looksLikeMultiItem(`${r.titulo} ${r.descricao}`));
+
+    // Filtro por palavras-chave obrigatórias
+    if (data.keywords && data.keywords.length > 0) {
+      const kws = data.keywords.map((k) => k.toLowerCase());
+      results = results.filter((r) => {
+        const blob = `${r.titulo} ${r.descricao}`.toLowerCase();
+        return kws.every((k) => blob.includes(k));
+      });
+    }
+
+    // Filtro modo exato — todos os tokens do título devem aparecer
+    if (mode === "exact" || mode === "all_keywords") {
+      const need = tokenize(data.query);
+      if (need.length > 0) {
+        results = results.filter((r) => {
+          const blob = tokenize(`${r.titulo} ${r.descricao}`);
+          const set = new Set(blob);
+          return need.every((t) => set.has(t));
+        });
+      }
+    }
 
     // Deduplicação cruzada por URL/título
     const seen = new Set<string>();
