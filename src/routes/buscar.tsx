@@ -250,6 +250,21 @@ function Buscar() {
                   </>
                 ) : q ? "Buscando..." : "Digite um termo para pesquisar."}
               </div>
+              {data?.fromCache && (
+                <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] text-muted-foreground">
+                  {refreshing ? (
+                    <>
+                      <RefreshCw className="h-3 w-3 animate-spin" />
+                      Cache de {data.cachedAt ? new Date(data.cachedAt).toLocaleString("pt-BR") : "—"} · atualizando ao vivo…
+                    </>
+                  ) : (
+                    <>
+                      <Database className="h-3 w-3" />
+                      Cache · {data.cachedAt ? new Date(data.cachedAt).toLocaleString("pt-BR") : ""}
+                    </>
+                  )}
+                </div>
+              )}
               {data && filtered.length > 0 && (
                 <div className="flex items-center gap-1">
                   <button onClick={() => exportCSV(filtered, q)} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs hover:bg-secondary transition-smooth">
