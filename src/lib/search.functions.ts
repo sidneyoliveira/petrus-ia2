@@ -41,6 +41,64 @@ function looksLikeMultiItem(text: string): boolean {
   return false;
 }
 
+// Remove preâmbulos comuns ("TERMO DE REFERÊNCIA", "EDITAL Nº", "CONCORRÊNCIA",
+// "PREGÃO ELETRÔNICO Nº ...", numeração de item "16 ", trailing object descriptions)
+// e extrai apenas a descrição limpa do item. Trata também o caso em que o
+// "objeto_compra" do PNCP traz blocos inteiros de texto (frases concatenadas
+// com valores, unidades e código do item).
+function cleanItemTitle(raw: string | undefined): string {
+  if (!raw) return "Sem título";
+  let s = String(raw).replace(/\s+/g, " ").trim();
+
+  // 1) Remove preâmbulos jurídico-administrativos
+  s = s.replace(
+    /^(?:termo\s+de\s+refer[eê]ncia|edital|concorr[eê]ncia|preg[aã]o(?:\s+eletr[oô]nico|\s+presencial)?|tomada\s+de\s+pre[cç]os|dispensa\s+de\s+licita[cç][aã]o|inexigibilidade|chamada\s+p[uú]blica|ata\s+de\s+registro\s+de\s+pre[cç]os?|contrato|processo)\b[:\s\-nº°.\d\/]*?/i,
+    "",
+  ).trim();
+
+  // 2) Remove numeração de item no início ("16 ", "16- ", "16. ", "Item 16 - ")
+  s = s.replace(/^(?:item\s*)?\d{1,4}\s*[-–.)]\s*/i, "").trim();
+  s = s.replace(/^\d{1,4}\s+(?=[A-Za-zÀ-ÿ])/, "").trim();
+
+  // 3) Corta no primeiro separador forte que indica início de outro item / texto
+  //    livre ("... É objeto do presente contrato ...", "...34.500. 17.250. UN. 17...")
+  const stopMarkers = [
+    /\.\s+[ÉÈEe]\s+objeto\b/,
+    /\.\s+[Ff]ica\s+/,
+    /\.\s+[OoAa]\s+presente\s+/,
+    /\bUN\.\s+\d{1,4}\b/, // bloco tipo "UN. 17"
+    /\b\d+\.\d{3}\.\s+\d+\.\d{3}\.\s+UN\./, // padrão "34.500. 17.250. UN."
+  ];
+  for (const re of stopMarkers) {
+    const m = s.match(re);
+    if (m && typeof m.index === "number" && m.index > 12) {
+      s = s.slice(0, m.index).trim();
+    }
+  }
+
+  // 4) Se ainda for muito longo, corta no primeiro ponto final após 24 chars
+  if (s.length > 140) {
+    const idx = s.indexOf(". ", 24);
+    if (idx > 0 && idx < 140) s = s.slice(0, idx).trim();
+  }
+
+  // 5) Hard-cap final
+  if (s.length > 180) s = s.slice(0, 177).trimEnd() + "…";
+
+  // 6) Remove caracteres residuais
+  s = s.replace(/^[\s\-–:.,;]+/, "").replace(/[\s\-–:.,;]+$/, "");
+  return s.length >= 4 ? s : (raw.slice(0, 120) || "Sem título");
+}
+
+// Detecta blocos de texto que claramente são corpo de PDF, não o nome do item.
+// Usado para descartar resultados onde nem o título nem a descrição são utilizáveis.
+function looksLikeRawDocumentText(text: string): boolean {
+  const t = (text || "").toLowerCase();
+  if (t.length > 350) return true;
+  if (/\b(é\s+objeto\s+do\s+presente|cl[aá]usula|p[aá]ragrafo\s+[uú]nico|considerando\s+que|nos\s+termos\s+da\s+lei)\b/.test(t)) return true;
+  return false;
+}
+
 function tokenize(s: string): string[] {
   return (s || "")
     .toLowerCase()
@@ -134,9 +192,9 @@ interface RawItem {
   [k: string]: unknown;
 }
 
-async function fetchPNCP(query: string, pagina: number): Promise<RawItem[]> {
+async function fetchPNCP(query: string, pagina: number, tamanho = 50): Promise<RawItem[]> {
   const tipos = "edital,ata,contrato";
-  const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=${tipos}&ordenacao=-data&pagina=${pagina}&pagina_tam=20&status=todos`;
+  const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=${tipos}&ordenacao=-data&pagina=${pagina}&pagina_tam=${tamanho}&status=todos`;
   try {
     const res = await fetch(url, {
       headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
