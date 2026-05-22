@@ -11,11 +11,14 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SobreRouteImport } from './routes/sobre'
 import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as CotacaoRouteImport } from './routes/cotacao'
 import { Route as BuscarRouteImport } from './routes/buscar'
 import { Route as AdminRouteImport } from './routes/admin'
+import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiOcrRouteImport } from './routes/api/ocr'
+import { Route as AuthenticatedCestasRouteImport } from './routes/_authenticated/cestas'
 
 const SobreRoute = SobreRouteImport.update({
   id: '/sobre',
@@ -25,6 +28,11 @@ const SobreRoute = SobreRouteImport.update({
 const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
   id: '/sitemap.xml',
   path: '/sitemap.xml',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CotacaoRoute = CotacaoRouteImport.update({
@@ -42,6 +50,10 @@ const AdminRoute = AdminRouteImport.update({
   path: '/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedRoute = AuthenticatedRouteImport.update({
+  id: '/_authenticated',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -52,14 +64,21 @@ const ApiOcrRoute = ApiOcrRouteImport.update({
   path: '/api/ocr',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedCestasRoute = AuthenticatedCestasRouteImport.update({
+  id: '/cestas',
+  path: '/cestas',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/buscar': typeof BuscarRoute
   '/cotacao': typeof CotacaoRoute
+  '/login': typeof LoginRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
+  '/cestas': typeof AuthenticatedCestasRoute
   '/api/ocr': typeof ApiOcrRoute
 }
 export interface FileRoutesByTo {
@@ -67,18 +86,23 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminRoute
   '/buscar': typeof BuscarRoute
   '/cotacao': typeof CotacaoRoute
+  '/login': typeof LoginRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
+  '/cestas': typeof AuthenticatedCestasRoute
   '/api/ocr': typeof ApiOcrRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/_authenticated': typeof AuthenticatedRouteWithChildren
   '/admin': typeof AdminRoute
   '/buscar': typeof BuscarRoute
   '/cotacao': typeof CotacaoRoute
+  '/login': typeof LoginRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
+  '/_authenticated/cestas': typeof AuthenticatedCestasRoute
   '/api/ocr': typeof ApiOcrRoute
 }
 export interface FileRouteTypes {
@@ -88,8 +112,10 @@ export interface FileRouteTypes {
     | '/admin'
     | '/buscar'
     | '/cotacao'
+    | '/login'
     | '/sitemap.xml'
     | '/sobre'
+    | '/cestas'
     | '/api/ocr'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -97,25 +123,32 @@ export interface FileRouteTypes {
     | '/admin'
     | '/buscar'
     | '/cotacao'
+    | '/login'
     | '/sitemap.xml'
     | '/sobre'
+    | '/cestas'
     | '/api/ocr'
   id:
     | '__root__'
     | '/'
+    | '/_authenticated'
     | '/admin'
     | '/buscar'
     | '/cotacao'
+    | '/login'
     | '/sitemap.xml'
     | '/sobre'
+    | '/_authenticated/cestas'
     | '/api/ocr'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   AdminRoute: typeof AdminRoute
   BuscarRoute: typeof BuscarRoute
   CotacaoRoute: typeof CotacaoRoute
+  LoginRoute: typeof LoginRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   SobreRoute: typeof SobreRoute
   ApiOcrRoute: typeof ApiOcrRoute
@@ -135,6 +168,13 @@ declare module '@tanstack/react-router' {
       path: '/sitemap.xml'
       fullPath: '/sitemap.xml'
       preLoaderRoute: typeof SitemapDotxmlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/cotacao': {
@@ -158,6 +198,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated': {
+      id: '/_authenticated'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AuthenticatedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -172,14 +219,35 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiOcrRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/cestas': {
+      id: '/_authenticated/cestas'
+      path: '/cestas'
+      fullPath: '/cestas'
+      preLoaderRoute: typeof AuthenticatedCestasRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
   }
 }
 
+interface AuthenticatedRouteChildren {
+  AuthenticatedCestasRoute: typeof AuthenticatedCestasRoute
+}
+
+const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
+  AuthenticatedCestasRoute: AuthenticatedCestasRoute,
+}
+
+const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
+  AuthenticatedRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AuthenticatedRoute: AuthenticatedRouteWithChildren,
   AdminRoute: AdminRoute,
   BuscarRoute: BuscarRoute,
   CotacaoRoute: CotacaoRoute,
+  LoginRoute: LoginRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   SobreRoute: SobreRoute,
   ApiOcrRoute: ApiOcrRoute,
@@ -187,13 +255,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
