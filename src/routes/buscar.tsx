@@ -392,7 +392,14 @@ function Buscar() {
                 </div>
               )}
             </div>
-            {isFetching && !data && <LiveSearchLog />}
+            {(isFetching || stream.inflight.length > 0) && (
+              <LiveSourceMonitor
+                inflight={stream.inflight}
+                sources={stream.sources}
+                totalSources={stream.totalSources}
+                phase={stream.phase}
+              />
+            )}
             {!isFetching && data?.sources?.length ? (
               <SourceStrip sources={data.sources} />
             ) : null}
@@ -666,35 +673,72 @@ function SourceStrip({
 }
 
 /**
- * Log rotativo durante a varredura — passa por cada fonte oficial a cada ~700ms
- * pra mostrar ao usuário que o sistema está vivo e onde está buscando.
+ * Monitor ao vivo da varredura — mostra cada fonte conforme o servidor
+ * envia eventos SSE. Verde = retornou itens, cinza = vazio, vermelho = erro,
+ * spinner azul = em execução. Também loga tudo no console com prefixo [busca].
  */
-function LiveSearchLog() {
-  const stages = useMemo(
-    () => [
-      "PNCP (Portal Nacional de Contratações Públicas)",
-      "Compras.gov.br",
-      "Portal da Transparência",
-      "TCE-CE",
-      "Transparência de Itarema",
-      "Diários Oficiais municipais",
-      "Atas de Registro de Preços",
-      "Bases de fornecedores",
-    ],
-    [],
-  );
-  const [idx, setIdx] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setIdx((i) => (i + 1) % stages.length), 700);
-    return () => clearInterval(t);
-  }, [stages.length]);
+function LiveSourceMonitor({
+  inflight,
+  sources,
+  totalSources,
+  phase,
+}: {
+  inflight: { name: string; status: string; count: number; error?: string }[];
+  sources: { name: string; status: string; count: number; error?: string }[];
+  totalSources: number;
+  phase?: string;
+}) {
+  const done = sources.length;
+  const total = totalSources || done + inflight.length;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   return (
-    <div className="mt-3 inline-flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1 text-[11px] font-mono text-muted-foreground">
-      <Loader2 className="h-3 w-3 animate-spin text-accent" />
-      <span>
-        Buscando em <span className="text-foreground">{stages[idx]}</span>
-        <span className="text-muted-foreground">…</span>
-      </span>
+    <div className="mt-3 rounded-md border border-border bg-card p-2.5 text-[11px]">
+      <div className="flex items-center justify-between mb-2">
+        <span className="inline-flex items-center gap-2 font-mono text-muted-foreground">
+          <Loader2 className="h-3 w-3 animate-spin text-accent" />
+          {phase ? (
+            <span>
+              <span className="text-foreground">{phase}</span>
+            </span>
+          ) : (
+            <span>
+              Buscando ao vivo — <span className="tabular-nums text-foreground">{done}/{total}</span> fontes ({pct}%)
+            </span>
+          )}
+        </span>
+        <span className="text-[10px] text-muted-foreground/70">veja detalhes no console (F12)</span>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {inflight.map((s) => (
+          <span
+            key={`run-${s.name}`}
+            className="inline-flex items-center gap-1 rounded-md border border-blue-400/40 bg-blue-500/10 px-1.5 py-0.5 text-blue-600 dark:text-blue-300"
+          >
+            <Loader2 className="h-2.5 w-2.5 animate-spin" />
+            {s.name}
+          </span>
+        ))}
+        {sources.slice().reverse().map((s, i) => {
+          const cls =
+            s.status === "ok"
+              ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              : s.status === "empty"
+                ? "border-border bg-muted/40 text-muted-foreground"
+                : "border-red-400/40 bg-red-500/10 text-red-600 dark:text-red-300";
+          const icon = s.status === "ok" ? "✓" : s.status === "empty" ? "∅" : "✗";
+          return (
+            <span
+              key={`done-${s.name}-${i}`}
+              title={s.error}
+              className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 ${cls}`}
+            >
+              <span className="font-mono">{icon}</span>
+              {s.name}
+              {s.status === "ok" && <span className="tabular-nums">{s.count}</span>}
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }

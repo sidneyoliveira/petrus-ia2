@@ -401,7 +401,14 @@ export const Route = createFileRoute("/api/public/search/stream")({
               };
 
               const wrapped = tasks.map((t) =>
-                t.run()
+                (() => {
+                  safeEnqueue("source:start", {
+                    name: t.name,
+                    started: sourcesDone.length,
+                    total: tasks.length,
+                  });
+                  return t.run();
+                })()
                   .then((items) => {
                     accRaw.push(...items);
                     sourcesDone.push({

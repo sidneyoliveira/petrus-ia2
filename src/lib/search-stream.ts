@@ -7,14 +7,18 @@ import type { PriceResult, SearchResponse, SearchSourceStatus } from "./types";
 
 export interface StreamSource {
   name: string;
-  status: "ok" | "empty" | "error";
+  status: "running" | "ok" | "empty" | "error";
   count: number;
   error?: string;
+  startedAt?: number;
+  finishedAt?: number;
 }
 
 export interface SearchStreamState {
   items: PriceResult[];
   sources: StreamSource[];
+  inflight: StreamSource[];
+  log: { ts: number; kind: string; text: string }[];
   totalSources: number;
   doneSources: number;
   phase?: string;
@@ -29,6 +33,8 @@ export interface SearchStreamState {
 const INITIAL: SearchStreamState = {
   items: [],
   sources: [],
+  inflight: [],
+  log: [],
   totalSources: 0,
   doneSources: 0,
   done: false,
@@ -116,17 +122,52 @@ export function useSearchStream(
             }
             const p = payload as Record<string, unknown>;
             if (evt.event === "start") {
-              setState((s) => ({ ...s, totalSources: Number(p.totalSources) || 0 }));
+              const total = Number(p.totalSources) || 0;
+              console.groupCollapsed(`%c[busca] iniciando — ${total} fontes`, "color:#888");
+              console.log("variantes:", p.variants);
+              console.groupEnd();
+              setState((s) => ({
+                ...s,
+                totalSources: total,
+                log: [...s.log, { ts: Date.now(), kind: "start", text: `varredura iniciada (${total} fontes)` }],
+              }));
+            } else if (evt.event === "source:start") {
+              const name = String(p.name ?? "?");
+              console.log(`%c[busca] → consultando ${name}`, "color:#3b82f6");
+              setState((s) => ({
+                ...s,
+                inflight: [
+                  ...s.inflight,
+                  { name, status: "running", count: 0, startedAt: Date.now() },
+                ],
+                log: [...s.log, { ts: Date.now(), kind: "start", text: `→ ${name}` }],
+              }));
             } else if (evt.event === "source") {
               const src: StreamSource = {
                 name: String(p.name ?? "?"),
                 status: (p.status as StreamSource["status"]) ?? "ok",
                 count: Number(p.count) || 0,
                 error: typeof p.error === "string" ? p.error : undefined,
+                finishedAt: Date.now(),
               };
+              const emoji = src.status === "ok" ? "✓" : src.status === "empty" ? "∅" : "✗";
+              const color = src.status === "ok" ? "#10b981" : src.status === "empty" ? "#6b7280" : "#ef4444";
+              console.log(
+                `%c[busca] ${emoji} ${src.name} — ${src.status === "error" ? src.error ?? "erro" : `${src.count} itens`}`,
+                `color:${color}`,
+              );
               setState((s) => ({
                 ...s,
                 sources: [...s.sources, src],
+                inflight: s.inflight.filter((x) => x.name !== src.name),
+                log: [
+                  ...s.log,
+                  {
+                    ts: Date.now(),
+                    kind: src.status,
+                    text: `${emoji} ${src.name} — ${src.status === "error" ? src.error ?? "erro" : `${src.count} itens`}`,
+                  },
+                ],
                 doneSources: Number(p.done) || s.doneSources + 1,
                 totalSources: Number(p.total) || s.totalSources,
               }));
@@ -138,9 +179,19 @@ export function useSearchStream(
                 tookMs: Date.now() - started,
               }));
             } else if (evt.event === "phase") {
-              setState((s) => ({ ...s, phase: String(p.name ?? "") }));
+              const name = String(p.name ?? "");
+              console.log(`%c[busca] ⏳ ${name}`, "color:#f59e0b");
+              setState((s) => ({
+                ...s,
+                phase: name,
+                log: [...s.log, { ts: Date.now(), kind: "phase", text: `⏳ ${name}` }],
+              }));
             } else if (evt.event === "done") {
               const final = payload as SearchResponse;
+              console.log(
+                `%c[busca] ✓ concluída em ${final.tookMs ?? Date.now() - started}ms — ${final.results.length} itens${final.fromCache ? " (cache)" : ""}`,
+                "color:#10b981;font-weight:bold",
+              );
               setState((s) => ({
                 ...s,
                 items: final.results,
@@ -148,14 +199,17 @@ export function useSearchStream(
                 fromCache: !!final.fromCache,
                 tookMs: final.tookMs ?? Date.now() - started,
                 phase: undefined,
+                inflight: [],
                 final,
                 finalSources: final.sources,
               }));
             } else if (evt.event === "error") {
+              console.error("[busca] erro fatal:", p.message);
               setState((s) => ({
                 ...s,
                 error: new Error(String(p.message ?? "erro desconhecido")),
                 done: true,
+                inflight: [],
               }));
             }
           }
