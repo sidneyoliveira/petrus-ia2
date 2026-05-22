@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { searchPrices } from "./search.functions";
+import { runHarvestForTerm } from "./harvest.server";
 
 async function requireAdmin(userId: string) {
   const { data, error } = await supabaseAdmin
@@ -93,37 +93,3 @@ export const runHarvestNow = createServerFn({ method: "POST" })
     if (error || !q) throw new Error("Query not found");
     return runHarvestForTerm(q.id, q.term);
   });
-
-/** Executa harvest para um termo específico. Usado por runHarvestNow e pelo cron tick. */
-export async function runHarvestForTerm(queryId: string, term: string) {
-  const { data: run } = await supabaseAdmin
-    .from("harvest_runs")
-    .insert({ query_id: queryId, term, status: "running" })
-    .select("id")
-    .single();
-  const runId = run?.id;
-  try {
-    const res = await searchPrices({ data: { query: term, forceRefresh: true } });
-    const persisted = res.results?.length ?? 0;
-    await supabaseAdmin
-      .from("harvest_queries")
-      .update({ last_run_at: new Date().toISOString(), total_found: persisted, updated_at: new Date().toISOString() })
-      .eq("id", queryId);
-    if (runId) {
-      await supabaseAdmin
-        .from("harvest_runs")
-        .update({ finished_at: new Date().toISOString(), items_persisted: persisted, status: "ok" })
-        .eq("id", runId);
-    }
-    return { ok: true, persisted };
-  } catch (e) {
-    const msg = (e as Error).message;
-    if (runId) {
-      await supabaseAdmin
-        .from("harvest_runs")
-        .update({ finished_at: new Date().toISOString(), status: "error", error: msg.slice(0, 500) })
-        .eq("id", runId);
-    }
-    throw e;
-  }
-}
