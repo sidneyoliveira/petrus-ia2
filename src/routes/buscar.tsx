@@ -60,6 +60,7 @@ function Buscar() {
   >("semantico");
   const [opened, setOpened] = useState<PriceResult | null>(null);
   const [saved, setSaved] = useState<Set<string>>(new Set());
+  const [searchNonce, setSearchNonce] = useState(0);
   const basket = useBasket();
   // View padrão = cards (original). Persiste a escolha do usuário no navegador.
   const [view, setView] = useState<"table" | "cards">(() => {
@@ -114,7 +115,7 @@ function Buscar() {
   );
 
   // Busca STREAMING — emite itens conforme cada fonte responde.
-  const streamKey = `${q}|${tema}|${mode}|${parsedKeywords.join(",")}`;
+  const streamKey = `${q}|${tema}|${mode}|${searchNonce}`;
   const stream = useSearchStream(
     q.trim().length >= 2
       ? {
@@ -122,7 +123,7 @@ function Buscar() {
           tema: tema.trim() || undefined,
           pagina: 1,
           mode,
-          keywords: parsedKeywords.length ? parsedKeywords : undefined,
+          forceRefresh: true,
         }
       : null,
     streamKey,
@@ -217,6 +218,13 @@ function Buscar() {
         .replace(/\s+/g, " ")
         .trim();
     const qWords = norm(q).split(" ").filter(Boolean);
+    const kwWords = parsedKeywords.map(norm).filter(Boolean);
+    const keywordTierOf = (r: PriceResult): number => {
+      if (kwWords.length === 0) return 0;
+      const hay = norm([r.objetoEstruturado, r.titulo, r.descricao].filter(Boolean).join(" "));
+      const hits = kwWords.filter((k) => hay.includes(k)).length;
+      return kwWords.length - hits;
+    };
     const tierOf = (r: PriceResult): number => {
       if (qWords.length === 0) return 0;
       const hay = norm(
@@ -230,6 +238,9 @@ function Buscar() {
     };
 
     arr = [...arr].sort((a, b) => {
+      const ka = keywordTierOf(a);
+      const kb = keywordTierOf(b);
+      if (ka !== kb) return ka - kb;
       const ta = tierOf(a);
       const tb = tierOf(b);
       if (ta !== tb) return ta - tb;
@@ -254,7 +265,7 @@ function Buscar() {
       }
     });
     return arr;
-  }, [data, dbData, filters, sortBy, q]);
+  }, [data, dbData, filters, sortBy, q, parsedKeywords]);
 
   // Estatísticas — apenas valores UNITÁRIOS confiáveis, com remoção de outliers (IQR)
   const stats = useMemo(() => {
@@ -304,7 +315,7 @@ function Buscar() {
                 const v = input.trim();
                 const t = temaInput.trim();
                 navigate({ to: "/buscar", search: { q: v, tema: t } });
-                if (v.length >= 2) refetch();
+                if (v.length >= 2) setSearchNonce((n) => n + 1);
               }}
               className="flex flex-col gap-2 rounded-xl border border-border bg-background px-3 py-2 shadow-card"
               aria-label="Pesquisar item"
@@ -461,14 +472,14 @@ function Buscar() {
               </div>
 
               <div className="mb-5">
-                <label className="text-xs text-muted-foreground mb-1.5 block">Palavras-chave obrigatórias</label>
+                <label className="text-xs text-muted-foreground mb-1.5 block">Priorizar palavras-chave</label>
                 <input
                   value={keywordsInput}
                   onChange={(e) => setKeywordsInput(e.target.value)}
                   placeholder="ex.: juvenil, unissex, elástico"
                   className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
                 />
-                <div className="text-[10px] text-muted-foreground mt-1">Separe por vírgula. Todas devem aparecer no item.</div>
+                <div className="text-[10px] text-muted-foreground mt-1">Separe por vírgula. Reordena/filtra localmente sem refazer a busca.</div>
               </div>
 
               <div className="flex items-center gap-2 mb-4">
