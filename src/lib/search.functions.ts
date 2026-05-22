@@ -12,6 +12,7 @@ import { healValuesBackground } from "./heal/value-healer.server";
 import { embedQuoteItemsBackground } from "./embed/embedder.server";
 import * as Cache from "./search/cache.server";
 import * as Pipeline from "./search/pipeline.server";
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type {
   PcpItem,
   PcpProcesso,
@@ -25,6 +26,7 @@ import type {
 // Re-bind module exports as locals so the serverFn body keeps using
 // bare names (refactor preserved behavior 1:1 from the old god-file).
 const {
+  asJson,
   CACHE_TTL_MS,
   normalizeQueryNorm,
   filtersHash,
