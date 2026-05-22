@@ -16,8 +16,16 @@
 
 const BASE = "https://dadosabertos.compras.gov.br";
 const PAGE_SIZE = 500;
-const MAX_PAGES_HARD = 20; // proteção: 20 × 500 = 10k itens por chamada
-const HTTP_TIMEOUT_MS = 20_000;
+/**
+ * A API só permite filtrar por janela de data — não há `?q=`. Para keyword
+ * search ao vivo precisamos baixar a janela e filtrar client-side. Como
+ * cada janela de 1 dia já costuma ter milhares de registros, limitamos
+ * agressivamente o número de páginas por chamada para caber no orçamento
+ * de CPU do Worker. Harvests em background podem ignorar esse limite via
+ * `fetchAllUnified` chamando os endpoints diretamente.
+ */
+const MAX_PAGES_LIVE = 4; // 4 × 500 = 2k itens por trilha por janela
+const HTTP_TIMEOUT_MS = 15_000;
 
 // ============================================================
 // Tipos brutos (refletem o JSON da API)
@@ -151,10 +159,13 @@ async function fetchJsonWithRetry<T>(url: string, attempts = 3): Promise<T | nul
  * Paginação inteligente: itera `pagina=1..N` enquanto `paginasRestantes > 0`,
  * concatenando o array `resultado`. Para em MAX_PAGES_HARD para evitar abuso.
  */
-async function paginateAll<T>(buildUrl: (pagina: number) => string): Promise<T[]> {
+async function paginateAll<T>(
+  buildUrl: (pagina: number) => string,
+  maxPages = MAX_PAGES_LIVE,
+): Promise<T[]> {
   const out: T[] = [];
   let pagina = 1;
-  while (pagina <= MAX_PAGES_HARD) {
+  while (pagina <= maxPages) {
     const data = await fetchJsonWithRetry<PagedResponse<T>>(buildUrl(pagina));
     if (!data) break;
     const chunk = data.resultado ?? data.data ?? [];
@@ -344,7 +355,7 @@ export async function searchComprasGovByKeyword(
   query: string,
   options: { dias?: number; incluirPregoes?: boolean; maxResultados?: number } = {},
 ): Promise<ComprasGovUnified[]> {
-  const dias = options.dias ?? 90;
+  const dias = options.dias ?? 7;
   const maxResultados = options.maxResultados ?? 200;
   const dataFinal = isoDaysAgo(0);
   const dataInicial = isoDaysAgo(dias);
@@ -353,15 +364,10 @@ export async function searchComprasGovByKeyword(
     .filter((t) => t.length >= 3);
   if (tokens.length === 0) return [];
 
-  const tasks: Promise<ComprasGovUnified[]>[] = [
-    fetch_itens_arp(dataInicial, dataFinal).then((rs) => rs.map(adaptARP)),
-    fetch_itens_homologados_nova_lei(dataInicial, dataFinal).then((rs) => rs.map(adapt14133)),
-  ];
-  if (options.incluirPregoes) {
-    tasks.push(fetch_itens_pregoes_legado(dataInicial, dataFinal).then((rs) => rs.map(adaptPregao)));
-  }
-  const settled = await Promise.allSettled(tasks);
-  const all = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+  // Memoização por janela: várias variantes de query disparam dentro da mesma
+  // requisição HTTP do TSS, então reutilizamos o bulk fetch para não pagar 5×
+  // a mesma paginação.
+  const all = await loadWindowCached(dataInicial, dataFinal, !!options.incluirPregoes);
 
   // Filtro: todos os tokens (>= 3 chars) presentes na descrição.
   const matched = all.filter((u) => {
@@ -370,4 +376,30 @@ export async function searchComprasGovByKeyword(
   });
 
   return matched.slice(0, maxResultados);
+}
+
+// ------- Cache por janela (process-local; TTL 5min) -------
+const WINDOW_CACHE = new Map<string, { at: number; data: ComprasGovUnified[] }>();
+const WINDOW_TTL_MS = 5 * 60 * 1000;
+
+async function loadWindowCached(
+  dataInicial: string,
+  dataFinal: string,
+  incluirPregoes: boolean,
+): Promise<ComprasGovUnified[]> {
+  const key = `${dataInicial}|${dataFinal}|${incluirPregoes ? "p" : ""}`;
+  const hit = WINDOW_CACHE.get(key);
+  if (hit && Date.now() - hit.at < WINDOW_TTL_MS) return hit.data;
+
+  const tasks: Promise<ComprasGovUnified[]>[] = [
+    fetch_itens_arp(dataInicial, dataFinal).then((rs) => rs.map(adaptARP)),
+    fetch_itens_homologados_nova_lei(dataInicial, dataFinal).then((rs) => rs.map(adapt14133)),
+  ];
+  if (incluirPregoes) {
+    tasks.push(fetch_itens_pregoes_legado(dataInicial, dataFinal).then((rs) => rs.map(adaptPregao)));
+  }
+  const settled = await Promise.allSettled(tasks);
+  const data = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+  WINDOW_CACHE.set(key, { at: Date.now(), data });
+  return data;
 }

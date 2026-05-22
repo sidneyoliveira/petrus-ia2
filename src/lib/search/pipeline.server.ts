@@ -843,7 +843,7 @@ export async function fetchComprasGov(query: string): Promise<RawItem[]> {
   // de fora por padrão (volume alto e dado redundante com o que já vem do PNCP).
   try {
     const unified = await searchComprasGovByKeyword(query, {
-      dias: 120,
+      dias: 7,
       incluirPregoes: false,
       maxResultados: 80,
     });
