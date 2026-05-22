@@ -10,6 +10,7 @@ import { healValuesBackground } from "./heal/value-healer.server";
 import { embedQuoteItemsBackground } from "./embed/embedder.server";
 import { classifyTriad } from "./extract/triad";
 import { searchComprasGovByKeyword, type ComprasGovUnified } from "./compras-gov.server";
+import { fetchM2aListing, fetchM2aPncpRef } from "./crawler/m2a-client.server";
 
 const asJson = <T,>(v: T): Json => v as unknown as Json;
 
@@ -234,6 +235,13 @@ async function writeCachedSearch(opts: {
 
 const FilterSchema = z.object({
   query: z.string().trim().min(1).max(200),
+  /**
+   * Tema/título da licitação (opcional). Usado pra descoberta de processos
+   * em portais que indexam por objeto (ex.: M2A). Ex.: query="caderno" +
+   * tema="material escolar" amplia o universo de processos descobertos sem
+   * perder precisão nos itens (filtrados pela query depois).
+   */
+  tema: z.string().trim().min(1).max(120).optional(),
   uf: z.string().optional(),
   modalidade: z.string().optional(),
   unidade: z.string().optional(),
