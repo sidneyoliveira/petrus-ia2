@@ -91,7 +91,11 @@ export const discoverWindow = inngest.createFunction(
       discoverComprasByWindow(dataInicial, dataFinal, modalidade),
     );
     if (compras.length === 0) return { compras: 0 };
-    const payloads = compras.map((c: PncpCompraRef) => ({
+    // Trava de custo: limita fan-out por janela para caber no free tier do
+    // Inngest (50k execuções/mês). 50 × 20 janelas/dia × 30 = 30k extracts/mês.
+    const MAX_PER_WINDOW = 50;
+    const capped = compras.slice(0, MAX_PER_WINDOW);
+    const payloads = capped.map((c: PncpCompraRef) => ({
       cnpj: c.cnpj, ano: c.ano, sequencial: c.sequencial,
       orgao: c.orgao, unidade: c.unidade, municipio: c.municipio,
       uf: c.uf, modalidade: c.modalidade, dataPublicacao: c.dataPublicacao,
@@ -100,7 +104,7 @@ export const discoverWindow = inngest.createFunction(
     await step.run("extract-fanout", () =>
       sendBatch("crawler/extract.compra", payloads),
     );
-    return { compras: compras.length };
+    return { compras: compras.length, dispatched: payloads.length, capped: capped.length < compras.length };
   },
 );
 
