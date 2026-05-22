@@ -45,7 +45,9 @@ function Buscar() {
   const [input, setInput] = useState(q);
   const [temaInput, setTemaInput] = useState(tema);
   const [keywordsInput, setKeywordsInput] = useState("");
-  const [mode, setMode] = useState<"semantic" | "exact" | "all_keywords">("semantic");
+  // Padrão = "exact" (busca literal por palavras do título). Expansão por IA
+  // ("semantic") é opt-in via o toggle "Expandir com IA".
+  const [mode, setMode] = useState<"semantic" | "exact" | "all_keywords">("exact");
   const [filters, setFilters] = useState({
     uf: "" as string,
     unidade: "",
@@ -55,7 +57,7 @@ function Buscar() {
   });
   const [sortBy, setSortBy] = useState<
     "compat" | "semantico" | "juridico" | "valorAsc" | "valorDesc" | "valorMedio" | "dataRecente"
-  >("compat");
+  >("semantico");
   const [opened, setOpened] = useState<PriceResult | null>(null);
   const [saved, setSaved] = useState<Set<string>>(new Set());
   const basket = useBasket();
