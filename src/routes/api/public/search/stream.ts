@@ -362,9 +362,10 @@ export const Route = createFileRoute("/api/public/search/stream")({
                 run: () => fetchPortalComprasPublicas(filters.query, 10),
               });
               if (filters.tema && filters.tema.length >= 2 && filters.tema !== filters.query) {
+                const temaQ = filters.tema;
                 tasks.push({
                   name: `Portal CP "${filters.tema}"`,
-                  run: () => fetchPortalComprasPublicas(filters.tema, 10),
+                  run: () => fetchPortalComprasPublicas(temaQ, 10),
                 });
               }
 
