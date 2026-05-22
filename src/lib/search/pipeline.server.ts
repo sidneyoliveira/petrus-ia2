@@ -339,19 +339,38 @@ export async function fetchPNCP(query: string, pagina: number, tamanho = 50): Pr
  * Custo controlado: 1 página × até `cap` processos × 1 GET cada.
  * Default cap=15 para inline (search ao vivo). Crawler em background usa 60.
  */
-export async function fetchM2A(searchTerm: string, cap = 15, budgetMs = 18_000): Promise<RawItem[]> {
+export async function fetchM2A(
+  searchTerm: string,
+  cap = 15,
+  budgetMs = 18_000,
+  pages = 3,
+): Promise<RawItem[]> {
   const term = searchTerm.trim();
   if (term.length < 2) return [];
   const deadline = Date.now() + budgetMs;
-  let listing: { id: string; slug: string; url: string }[] = [];
-  try {
-    listing = await fetchM2aListing({ search: term, situacao: 7, page: 1 });
-  } catch (e) {
-    console.warn(`[m2a] listing err term="${term}" err=${(e as Error).message}`);
-    return [];
+  // Pagina N páginas da listagem. Cada página tem ~20 processos; deduplicamos
+  // por id (slug) caso o portal repita.
+  const collected: { id: string; slug: string; url: string }[] = [];
+  const seenIds = new Set<string>();
+  for (let p = 1; p <= pages; p++) {
+    if (Date.now() > deadline) break;
+    let pageHits: { id: string; slug: string; url: string }[] = [];
+    try {
+      pageHits = await fetchM2aListing({ search: term, situacao: 7, page: p });
+    } catch (e) {
+      console.warn(`[m2a] listing err term="${term}" page=${p} err=${(e as Error).message}`);
+      break;
+    }
+    if (pageHits.length === 0) break;
+    for (const h of pageHits) {
+      if (seenIds.has(h.id)) continue;
+      seenIds.add(h.id);
+      collected.push(h);
+    }
+    if (collected.length >= cap) break;
   }
-  if (listing.length === 0) return [];
-  const capped = listing.slice(0, cap);
+  if (collected.length === 0) return [];
+  const capped = collected.slice(0, cap);
 
   const out: RawItem[] = [];
   const CONC = 5;
