@@ -9,6 +9,7 @@ import { enrichCnpjsBackground } from "./enrich/cnpj";
 import { healValuesBackground } from "./heal/value-healer.server";
 import { embedQuoteItemsBackground } from "./embed/embedder.server";
 import { classifyTriad } from "./extract/triad";
+import { searchComprasGovByKeyword, type ComprasGovUnified } from "./compras-gov.server";
 
 const asJson = <T,>(v: T): Json => v as unknown as Json;
 
