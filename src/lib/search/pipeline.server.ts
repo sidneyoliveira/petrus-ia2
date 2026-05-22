@@ -17,16 +17,16 @@ import { fetchM2aListing, fetchM2aPncpRef } from "../crawler/m2a-client.server";
 void z;
 
 
-const asJson = <T,>(v: T): Json => v as unknown as Json;
+export const asJson = <T,>(v: T): Json => v as unknown as Json;
 
 // ============================================================
 // PNCP HTTP helper — User-Agent profissional + exp-backoff em 429/5xx
 // ============================================================
 // A API do PNCP é instável sob carga (429/502/503/504 frequentes).
 // Centraliza headers, timeout e retry para todas as chamadas PNCP.
-const PNCP_UA = "Petrus-IA-DataEngine/1.0 (+cotacao)";
+export const PNCP_UA = "Petrus-IA-DataEngine/1.0 (+cotacao)";
 
-async function pncpFetchJson<T>(
+export async function pncpFetchJson<T>(
   url: string,
   opts: { timeoutMs?: number; attempts?: number } = {},
 ): Promise<T | null> {
@@ -66,7 +66,7 @@ async function pncpFetchJson<T>(
   }
   return null;
 }
-const FORBIDDEN = [
+export const FORBIDDEN = [
   "mercadolivre",
   "mercado livre",
   "shopee",
@@ -78,7 +78,7 @@ const FORBIDDEN = [
 // Heurística para detectar resultados que misturam múltiplos itens distintos
 // (ex.: "CALÇA COM ELÁSTICO, CALÇA SEM ELÁSTICO"). Resultados assim viram lote
 // e não servem para cotação unitária — devem ser filtrados.
-function looksLikeMultiItem(text: string): boolean {
+export function looksLikeMultiItem(text: string): boolean {
   const t = text.toLowerCase();
   // separadores explícitos de listagem
   const seps = (t.match(/[;\/]|(?:^|\s)e\s|\bcom\s+e\s+sem\b|,\s*[a-z]{4,}/g) ?? []).length;
@@ -95,7 +95,7 @@ function looksLikeMultiItem(text: string): boolean {
 // e extrai apenas a descrição limpa do item. Trata também o caso em que o
 // "objeto_compra" do PNCP traz blocos inteiros de texto (frases concatenadas
 // com valores, unidades e código do item).
-function cleanItemTitle(raw: string | undefined): string {
+export function cleanItemTitle(raw: string | undefined): string {
   if (!raw) return "Sem título";
   let s = String(raw).replace(/\s+/g, " ").trim();
 
@@ -141,7 +141,7 @@ function cleanItemTitle(raw: string | undefined): string {
 
 // Detecta blocos de texto que claramente são corpo de PDF, não o nome do item.
 // Usado para descartar resultados onde nem o título nem a descrição são utilizáveis.
-function looksLikeRawDocumentText(text: string): boolean {
+export function looksLikeRawDocumentText(text: string): boolean {
   const t = (text || "").toLowerCase();
   if (t.length > 350) return true;
   if (/\b(é\s+objeto\s+do\s+presente|cl[aá]usula|p[aá]ragrafo\s+[uú]nico|considerando\s+que|nos\s+termos\s+da\s+lei)\b/.test(t)) return true;
@@ -150,7 +150,7 @@ function looksLikeRawDocumentText(text: string): boolean {
 
 // Detecta descrição de PROCESSO (não-item): "O objeto do presente contrato é
 // a compra/aquisição de X". Não traz especificação técnica de um item único.
-function looksLikeProcessObject(text: string): boolean {
+export function looksLikeProcessObject(text: string): boolean {
   const t = (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   if (/\bobjeto\s+(do|deste|da|desta)\s+(presente\s+)?(contrato|procedimento|certame|ata|edital|pregao|licitacao|chamamento|dispensa|inexigibilidade)\b/.test(t)) return true;
   if (/^(o|a)\s+(presente\s+)?(contrato|ata|edital|pregao|procedimento)\b/.test(t)) return true;
@@ -162,7 +162,7 @@ function looksLikeProcessObject(text: string): boolean {
 // (ex.: "nº 20260186 SEMED/2026", "Ata 12/2024", "PCP 3/2026 - Portal...",
 // "Pregão Eletrônico 045/2025"). Esses NUNCA devem virar título do item —
 // servem só como metadado (já temos campos numero/ano).
-function looksLikeProcessNumberTitle(text: string): boolean {
+export function looksLikeProcessNumberTitle(text: string): boolean {
   if (!text) return true;
   const t = text.trim();
   if (t.length < 4) return true;
@@ -179,7 +179,7 @@ function looksLikeProcessNumberTitle(text: string): boolean {
   return false;
 }
 
-function tokenize(s: string): string[] {
+export function tokenize(s: string): string[] {
   return (s || "")
     .toLowerCase()
     .normalize("NFD")
@@ -189,7 +189,7 @@ function tokenize(s: string): string[] {
     .filter((t) => t.length > 2);
 }
 
-function jaccard(a: string[], b: string[]): number {
+export function jaccard(a: string[], b: string[]): number {
   const A = new Set(a);
   const B = new Set(b);
   const inter = [...A].filter((x) => B.has(x)).length;
@@ -197,7 +197,7 @@ function jaccard(a: string[], b: string[]): number {
   return inter / uni;
 }
 
-function cosine(a: number[], b: number[]): number {
+export function cosine(a: number[], b: number[]): number {
   let dot = 0;
   let na = 0;
   let nb = 0;
@@ -211,7 +211,7 @@ function cosine(a: number[], b: number[]): number {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-async function getEmbeddings(texts: string[], apiKey: string): Promise<number[][]> {
+export async function getEmbeddings(texts: string[], apiKey: string): Promise<number[][]> {
   try {
     const res = await fetch("https://ai.gateway.lovable.dev/v1/embeddings", {
       method: "POST",
@@ -237,7 +237,7 @@ async function getEmbeddings(texts: string[], apiKey: string): Promise<number[][
   }
 }
 
-interface RawItem {
+export interface RawItem {
   id?: string | number;
   numero?: string;
   numero_sequencial?: string | number | null;
@@ -281,7 +281,7 @@ interface RawItem {
   [k: string]: unknown;
 }
 
-function parsePncpPublicUrl(url?: string): { cnpj: string; ano: string; sequencial: string; tipo?: string } | null {
+export function parsePncpPublicUrl(url?: string): { cnpj: string; ano: string; sequencial: string; tipo?: string } | null {
   if (!url) return null;
   try {
     const u = /^https?:\/\//i.test(url) ? new URL(url) : new URL(url, "https://pncp.gov.br/app");
@@ -293,14 +293,14 @@ function parsePncpPublicUrl(url?: string): { cnpj: string; ano: string; sequenci
   }
 }
 
-function parseNumeroControlePncpCompra(value?: unknown): { cnpj: string; ano: string; sequencial: string } | null {
+export function parseNumeroControlePncpCompra(value?: unknown): { cnpj: string; ano: string; sequencial: string } | null {
   const s = String(value ?? "").trim();
   const m = s.match(/(\d{14})-1-0*(\d+)\/(\d{4})/);
   if (!m) return null;
   return { cnpj: m[1], sequencial: String(Number(m[2])), ano: m[3] };
 }
 
-async function resolvePncpCompraFromContract(
+export async function resolvePncpCompraFromContract(
   cnpj: string,
   ano: string | number,
   sequencialContrato: string | number,
@@ -317,7 +317,7 @@ async function resolvePncpCompraFromContract(
   };
 }
 
-async function fetchPNCP(query: string, pagina: number, tamanho = 50): Promise<RawItem[]> {
+export async function fetchPNCP(query: string, pagina: number, tamanho = 50): Promise<RawItem[]> {
   const tipos = "edital,ata,contrato";
   const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=${tipos}&ordenacao=-data&pagina=${pagina}&pagina_tam=${tamanho}&status=todos`;
   const data = await pncpFetchJson<{ items?: RawItem[]; resultados?: RawItem[] }>(url, {
@@ -337,7 +337,7 @@ async function fetchPNCP(query: string, pagina: number, tamanho = 50): Promise<R
  * Custo controlado: 1 página × até `cap` processos × 1 GET cada.
  * Default cap=15 para inline (search ao vivo). Crawler em background usa 60.
  */
-async function fetchM2A(searchTerm: string, cap = 15, budgetMs = 18_000): Promise<RawItem[]> {
+export async function fetchM2A(searchTerm: string, cap = 15, budgetMs = 18_000): Promise<RawItem[]> {
   const term = searchTerm.trim();
   if (term.length < 2) return [];
   const deadline = Date.now() + budgetMs;
@@ -386,7 +386,7 @@ async function fetchM2A(searchTerm: string, cap = 15, budgetMs = 18_000): Promis
 // PNCP API de consulta — retorna ITENS individuais de uma contratação/ata/contrato,
 // cada um com valor UNITÁRIO (estimado e/ou homologado), unidade e quantidade.
 // Isto resolve o problema do "valor global do processo" aparecer como cotação.
-interface PncpItemRaw {
+export interface PncpItemRaw {
   numeroItem?: number;
   descricao?: string;
   unidadeMedida?: string;
@@ -411,7 +411,7 @@ interface PncpItemRaw {
  *  2. Endpoint B: para cada processo, baixa itens em paralelo (lote 10).
  *  3. Filtra itens cuja descrição contenha algum token da query.
  */
-interface PcpProcesso {
+export interface PcpProcesso {
   codigoLicitacao?: number | string;
   razaoSocial?: string;
   uf?: string;
@@ -422,7 +422,7 @@ interface PcpProcesso {
   ano?: string | number;
   modalidade?: string;
 }
-interface PcpItem {
+export interface PcpItem {
   codigoItem?: number | string;
   descricao?: string;
   unidade?: string;
@@ -432,7 +432,7 @@ interface PcpItem {
   valorTotal?: number;
   situacao?: string;
 }
-async function fetchPortalComprasPublicas(
+export async function fetchPortalComprasPublicas(
   query: string,
   maxProcessos = 10,
   budgetMs = 18_000,
@@ -558,11 +558,11 @@ async function fetchPortalComprasPublicas(
   return out;
 }
 
-function validPrice(value: unknown): number | undefined {
+export function validPrice(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
-async function fetchPncpItens(
+export async function fetchPncpItens(
   cnpj: string,
   ano: string | number,
   sequencial: string | number,
@@ -594,7 +594,7 @@ async function fetchPncpItens(
 // quantidadeHomologada e o fornecedor vencedor). Quando disponível, é a
 // fonte mais confiável de preço — supera estimado e supera o que vem em
 // /itens, que muitas vezes só traz `valorUnitarioEstimado`.
-interface PncpResultadoRaw {
+export interface PncpResultadoRaw {
   numeroItem?: number;
   sequencialResultado?: number;
   valorUnitarioHomologado?: number;
@@ -606,7 +606,7 @@ interface PncpResultadoRaw {
   dataCancelamento?: string | null;
 }
 
-async function fetchPncpItemResultado(
+export async function fetchPncpItemResultado(
   cnpj: string,
   ano: string | number,
   sequencial: string | number,
@@ -638,7 +638,7 @@ async function fetchPncpItemResultado(
  *
  * Limitado aos top-N por custo. Resultados sem cnpj/ano/sequencial ficam como estão.
  */
-async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): Promise<RawItem[]> {
+export async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): Promise<RawItem[]> {
   const qLower = query.toLowerCase();
   const qTokens = qLower.split(/\s+/).filter((t) => t.length > 2);
   const enrichable: RawItem[] = [];
@@ -830,7 +830,7 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
 
 // Compras.gov.br — endpoint público de contratos (Dados Abertos)
 // Faz busca alternativa por palavra-chave em contratos, com fallback silencioso.
-async function fetchComprasGov(query: string): Promise<RawItem[]> {
+export async function fetchComprasGov(query: string): Promise<RawItem[]> {
   // API oficial de Dados Abertos do Compras.gov.br v2.0
   // Cobre Trilha 3 (ARP) + Trilha 1 (Nova Lei 14.133); pregões legados ficam
   // de fora por padrão (volume alto e dado redundante com o que já vem do PNCP).
@@ -848,7 +848,7 @@ async function fetchComprasGov(query: string): Promise<RawItem[]> {
 }
 
 /** Converte o formato unificado do compras.gov para o RawItem do pipeline. */
-function unifiedToRawItem(u: ComprasGovUnified): RawItem {
+export function unifiedToRawItem(u: ComprasGovUnified): RawItem {
   const sourceLabel =
     u.origem_lei === "arp"
       ? "Compras.gov ARP"
@@ -884,7 +884,7 @@ function unifiedToRawItem(u: ComprasGovUnified): RawItem {
 }
 
 // Portal da Transparência — atas/registros de preço (variante PNCP filtrada)
-async function fetchTransparencia(query: string): Promise<RawItem[]> {
+export async function fetchTransparencia(query: string): Promise<RawItem[]> {
   const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=ata&ordenacao=-data&pagina=1&pagina_tam=15&status=todos`;
   try {
     const res = await fetch(url, {
@@ -909,13 +909,13 @@ async function fetchTransparencia(query: string): Promise<RawItem[]> {
 //
 // Estratégia tolerante: tentamos dois hosts candidatos e duas views.
 // Se nenhuma responder (rede/geo-block), devolve [] silenciosamente.
-const TCE_CE_HOSTS = [
+export const TCE_CE_HOSTS = [
   "https://api-dados-abertos.tce.ce.gov.br/sim",
   "https://api.tce.ce.gov.br/index.php/sim/1_0",
 ];
-const TCE_CE_VIEWS = ["queryView_dv_itens_licitados", "queryView_dv_contratados"];
+export const TCE_CE_VIEWS = ["queryView_dv_itens_licitados", "queryView_dv_contratados"];
 
-interface TCECERow {
+export interface TCECERow {
   // nomes alternativos cobrindo as duas views — só os que existirem são usados
   id_item?: string | number;
   descricao_item?: string;
@@ -946,7 +946,7 @@ interface TCECERow {
   [k: string]: unknown;
 }
 
-function numFromBR(v: unknown): number | undefined {
+export function numFromBR(v: unknown): number | undefined {
   if (typeof v === "number" && Number.isFinite(v)) return v > 0 ? v : undefined;
   if (typeof v !== "string") return undefined;
   const cleaned = v.trim().replace(/\s/g, "").replace(/\.(?=\d{3}(?:[.,]|$))/g, "").replace(",", ".");
@@ -954,7 +954,7 @@ function numFromBR(v: unknown): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-async function fetchTceCeView(host: string, view: string, query: string): Promise<TCECERow[]> {
+export async function fetchTceCeView(host: string, view: string, query: string): Promise<TCECERow[]> {
   // Parametros heurísticos: tentamos `descricao_item` como filtro de texto.
   // Algumas instâncias usam `q` ou `objeto` — incluímos os dois.
   const params = new URLSearchParams({
@@ -989,7 +989,7 @@ async function fetchTceCeView(host: string, view: string, query: string): Promis
   }
 }
 
-async function fetchTCECE(query: string): Promise<RawItem[]> {
+export async function fetchTCECE(query: string): Promise<RawItem[]> {
   const tasks: Promise<TCECERow[]>[] = [];
   for (const host of TCE_CE_HOSTS) {
     for (const view of TCE_CE_VIEWS) {
@@ -1046,7 +1046,7 @@ async function fetchTCECE(query: string): Promise<RawItem[]> {
 
 // Expansão inteligente de consulta: gera variações sinônimas via Lovable AI.
 // Falha silenciosamente — devolve apenas a query original em caso de erro.
-async function expandQuery(query: string, apiKey: string | undefined): Promise<string[]> {
+export async function expandQuery(query: string, apiKey: string | undefined): Promise<string[]> {
   const base = query.trim();
   if (!apiKey) return [base];
   try {
@@ -1089,7 +1089,7 @@ async function expandQuery(query: string, apiKey: string | undefined): Promise<s
 
 // Busca aberta via Firecrawl em portais oficiais .gov.br (quando o conector estiver ativo).
 // Caso FIRECRAWL_API_KEY não esteja configurada, retorna [] silenciosamente.
-function sourceMetaForUrl(url: string | undefined, catalog: { domain: string; name: string }[]) {
+export function sourceMetaForUrl(url: string | undefined, catalog: { domain: string; name: string }[]) {
   if (!url) return { domain: undefined, name: undefined };
   try {
     const host = new URL(url).hostname.replace(/^www\./, "");
@@ -1103,7 +1103,7 @@ function sourceMetaForUrl(url: string | undefined, catalog: { domain: string; na
   }
 }
 
-async function fetchFirecrawlWeb(query: string, siteFilters: string[], catalog: { domain: string; name: string }[] = []): Promise<RawItem[]> {
+export async function fetchFirecrawlWeb(query: string, siteFilters: string[], catalog: { domain: string; name: string }[] = []): Promise<RawItem[]> {
   const key = process.env.FIRECRAWL_API_KEY;
   if (!key) return [];
   // Constrói consulta com OR de domínios priorizados pelo catálogo (price_sources)
@@ -1161,7 +1161,7 @@ async function fetchFirecrawlWeb(query: string, siteFilters: string[], catalog: 
  * principal (não nas variantes) — custo: N calls × 1 crédito por busca do
  * usuário, onde N é o número de portais nomeados (default 6).
  */
-async function fetchFirecrawlPerDomain(
+export async function fetchFirecrawlPerDomain(
   query: string,
   domains: string[],
   catalog: { domain: string; name: string }[],
@@ -1213,7 +1213,7 @@ async function fetchFirecrawlPerDomain(
 // Busca FORNECEDORES REAIS na internet (fabricantes/distribuidores B2B,
 // catálogos, e-commerces especializados). Exclui marketplaces proibidos.
 // Inciso V da Lei 14.133/2021 — cotação direta com fornecedores.
-async function fetchFirecrawlSuppliers(query: string): Promise<RawItem[]> {
+export async function fetchFirecrawlSuppliers(query: string): Promise<RawItem[]> {
   const key = process.env.FIRECRAWL_API_KEY;
   if (!key) return [];
   // Operadores de exclusão para banir marketplaces poluentes
@@ -1287,14 +1287,14 @@ async function fetchFirecrawlSuppliers(query: string): Promise<RawItem[]> {
 // "<desc...> <UN|CX|KG|...> <qtd> <R$ unit> <R$ total>"
 // Parser de ancoragem reversa: localiza pares de R$, recua para qtd/unidade
 // e pega a descrição imediatamente anterior.
-const UNIDADES_RE = /\b(UN|UND|UNID|CX|KG|PC|PCT|PAR|MT|ML|LT|L|CM|M|M2|M3|SC|GL|RL|RES|FR|CJ|SRV|HR|DZ|KIT)\b/i;
-function parsePriceBR(s: string): number | undefined {
+export const UNIDADES_RE = /\b(UN|UND|UNID|CX|KG|PC|PCT|PAR|MT|ML|LT|L|CM|M|M2|M3|SC|GL|RL|RES|FR|CJ|SRV|HR|DZ|KIT)\b/i;
+export function parsePriceBR(s: string): number | undefined {
   if (!s) return undefined;
   const norm = s.replace(/\s/g, "").replace(/\.(?=\d{3}(?:[.,]|$))/g, "").replace(",", ".");
   const n = parseFloat(norm);
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
-function parseQtyBR(s: string): number | undefined {
+export function parseQtyBR(s: string): number | undefined {
   if (!s) return undefined;
   const norm = s.replace(/\s/g, "").replace(/\.(?=\d{3}(?:[.,]|$))/g, "").replace(",", ".");
   const n = parseFloat(norm);
@@ -1306,7 +1306,7 @@ function parseQtyBR(s: string): number | undefined {
  * Estratégia: para cada par "<num1> <num2>" que pareça (R$ unitário, R$ total),
  * recua tokens à esquerda procurando quantidade + unidade + descrição.
  */
-function extractItemsFromText(text: string, sourceUrl: string, sourceLabel: string): RawItem[] {
+export function extractItemsFromText(text: string, sourceUrl: string, sourceLabel: string): RawItem[] {
   if (!text || text.length < 60) return [];
   // Normaliza espaços/quebras
   const cleaned = text.replace(/\u00A0/g, " ").replace(/[ \t]+/g, " ").replace(/\n{2,}/g, "\n");
@@ -1359,7 +1359,7 @@ function extractItemsFromText(text: string, sourceUrl: string, sourceLabel: stri
  * (A) Google Dorking via Firecrawl — busca PDFs oficiais de Atas/Homologação
  * em portais .gov.br (foco prefeituras / transparência). Devolve URLs candidatas.
  */
-async function dorkPdfAttachments(query: string): Promise<string[]> {
+export async function dorkPdfAttachments(query: string): Promise<string[]> {
   const key = process.env.FIRECRAWL_API_KEY;
   if (!key) return [];
   const q = `${query} ("Ata de Registro de Preços" OR "Termo de Homologação" OR "Mapa de Apuração") filetype:pdf site:gov.br`;
@@ -1388,7 +1388,7 @@ async function dorkPdfAttachments(query: string): Promise<string[]> {
  * (B) Scrape de um PDF → markdown via Firecrawl, e roda extractItemsFromText.
  * Firecrawl entrega texto extraído de PDF como markdown.
  */
-async function scrapeAndMine(url: string, label: string): Promise<RawItem[]> {
+export async function scrapeAndMine(url: string, label: string): Promise<RawItem[]> {
   const key = process.env.FIRECRAWL_API_KEY;
   if (!key) return [];
   const ctrl = new AbortController();
@@ -1447,7 +1447,7 @@ async function scrapeAndMine(url: string, label: string): Promise<RawItem[]> {
 // + entidade quantitativa + entidade financeira), ignorando objetos de
 // edital, valores globais e ruído jurídico.
 
-const ONTOLOGY_PROMPT = `Você é um Motor de Inferência Ontológica especializado em Contratos Públicos.
+export const ONTOLOGY_PROMPT = `Você é um Motor de Inferência Ontológica especializado em Contratos Públicos.
 
 Você receberá um texto bruto extraído de PDFs ou HTMLs desestruturados de diversas prefeituras. O texto pode estar quebrado, aglutinado, em formato de tabela ou texto corrido.
 
@@ -1470,7 +1470,7 @@ EXCLUSÕES:
 
 SAÍDA: retorne APENAS um JSON no formato {"itens": [...]} onde cada item tem as chaves: "descricao" (string), "unidade" (string), "quantidade" (number), "valor_unitario" (number), "valor_total" (number). Use ponto como separador decimal. Se nenhum item válido for detectado, retorne {"itens": []}.`;
 
-async function ontologicalExtract(
+export async function ontologicalExtract(
   text: string,
   sourceUrl: string,
   sourceLabel: string,
@@ -1578,7 +1578,7 @@ async function ontologicalExtract(
  * (C) Mineração de tabelas HTML: percorre <table><tr><td> e identifica
  * colunas plausíveis de descrição/unidade/quantidade/valor unitário/valor total.
  */
-function extractItemsFromHtmlTables(html: string, sourceUrl: string, sourceLabel: string): RawItem[] {
+export function extractItemsFromHtmlTables(html: string, sourceUrl: string, sourceLabel: string): RawItem[] {
   if (!html || html.length < 200) return [];
   const items: RawItem[] = [];
   // Tira scripts/styles para reduzir ruído
@@ -1650,7 +1650,7 @@ function extractItemsFromHtmlTables(html: string, sourceUrl: string, sourceLabel
  * Orquestrador: dorking de PDFs + scrape paralelo com limite de concorrência.
  * Time-boxed para não estourar o budget do servidor.
  */
-async function mineAttachments(query: string, extraUrls: string[] = []): Promise<RawItem[]> {
+export async function mineAttachments(query: string, extraUrls: string[] = []): Promise<RawItem[]> {
   if (!process.env.FIRECRAWL_API_KEY) return [];
   const dorked = await dorkPdfAttachments(query);
   const urls = Array.from(new Set([...dorked, ...extraUrls])).slice(0, 6);
@@ -1681,7 +1681,7 @@ async function mineAttachments(query: string, extraUrls: string[] = []): Promise
 // de processo, depois `scrapeAndMine` extrai tríades (qtd × unitário = total).
 //
 // Cada portal vira tarefa paralela no orquestrador; falha silenciosa via [].
-const PORTAIS = [
+export const PORTAIS = [
   { domain: "portaldecompraspublicas.com.br", name: "Portal de Compras Públicas" },
   { domain: "bllcompras.com",                 name: "BLL Compras" },
   { domain: "licitacoes-e.com.br",            name: "Licitações-e (BB)" },
@@ -1689,7 +1689,7 @@ const PORTAIS = [
   { domain: "compras.bb.com.br",              name: "Compras BB" },
 ] as const;
 
-async function searchPortalUrls(query: string, domain: string, limit = 4): Promise<string[]> {
+export async function searchPortalUrls(query: string, domain: string, limit = 4): Promise<string[]> {
   const key = process.env.FIRECRAWL_API_KEY;
   if (!key) return [];
   // Termos que isolam páginas de processo/edital homologado dentro do portal
@@ -1715,7 +1715,7 @@ async function searchPortalUrls(query: string, domain: string, limit = 4): Promi
   }
 }
 
-async function minePortais(query: string): Promise<RawItem[]> {
+export async function minePortais(query: string): Promise<RawItem[]> {
   if (!process.env.FIRECRAWL_API_KEY) return [];
   // 1) descobre URLs em paralelo, um Firecrawl-search por portal
   const discovered = await Promise.allSettled(
@@ -1743,7 +1743,7 @@ async function minePortais(query: string): Promise<RawItem[]> {
 }
 
 // Lê catálogo de fontes (price_sources) ordenado por prioridade e taxa de sucesso.
-async function loadActiveSources(): Promise<{ domain: string; name: string }[]> {
+export async function loadActiveSources(): Promise<{ domain: string; name: string }[]> {
   try {
     const { data, error } = await supabaseAdmin
       .from("price_sources")
@@ -1759,7 +1759,7 @@ async function loadActiveSources(): Promise<{ domain: string; name: string }[]> 
 }
 
 // Descobre novos domínios .gov.br a partir das URLs retornadas e os salva no catálogo.
-async function registerDiscoveredDomains(urls: string[], known: Set<string>) {
+export async function registerDiscoveredDomains(urls: string[], known: Set<string>) {
   const news = new Map<string, string>();
   for (const u of urls) {
     if (!u) continue;
@@ -1788,7 +1788,7 @@ async function registerDiscoveredDomains(urls: string[], known: Set<string>) {
 }
 
 // Constrói a URL absoluta da página oficial do PNCP a partir dos campos do item.
-function buildPncpUrl(raw: RawItem): string | undefined {
+export function buildPncpUrl(raw: RawItem): string | undefined {
   // Fontes não-PNCP (TCE-CE, fornecedores, web): preserva url original ou nada.
   if (raw._source && raw._source !== "PNCP" && raw._source !== "Transparência" && raw._source !== "Compras.gov.br") {
     const u = (raw.url as string | undefined) || (raw.item_url as string | undefined);
@@ -1812,12 +1812,12 @@ function buildPncpUrl(raw: RawItem): string | undefined {
   return undefined;
 }
 
-function isSupplierOrCommercial(r: PriceResult): boolean {
+export function isSupplierOrCommercial(r: PriceResult): boolean {
   const source = (r.origem || "").toLowerCase();
   return Boolean(r.fornecedor) && !/(pncp|compras\.gov|transpar|tce|tribunal|gov\.br)/i.test(source);
 }
 
-function isGranularItemResult(r: PriceResult): boolean {
+export function isGranularItemResult(r: PriceResult): boolean {
   const title = r.titulo || "";
   if (!title || looksLikeProcessNumberTitle(title) || looksLikeProcessObject(title) || looksLikeRawDocumentText(title)) {
     return false;
@@ -1831,7 +1831,7 @@ function isGranularItemResult(r: PriceResult): boolean {
   return Boolean(r.unidade || r.quantidade || r.valorTotal || typeof r.valor === "number");
 }
 
-function summarizeSources(results: PriceResult[], catalog: { domain: string; name: string }[]): SearchSourceStatus[] {
+export function summarizeSources(results: PriceResult[], catalog: { domain: string; name: string }[]): SearchSourceStatus[] {
   const base = ["PNCP", "Compras.gov.br", "TCE-CE", "Portal de Compras Públicas", "Anexos (PDF/HTML)", ...catalog.slice(0, 8).map((s) => s.name)];
   const map = new Map<string, SearchSourceStatus>();
   for (const name of base) {
@@ -1847,7 +1847,7 @@ function summarizeSources(results: PriceResult[], catalog: { domain: string; nam
   return Array.from(map.values()).filter((s, i) => s.total > 0 || i < 8).slice(0, 12);
 }
 
-function toResult(raw: RawItem): PriceResult {
+export function toResult(raw: RawItem): PriceResult {
   // Título do ITEM (descrição do objeto comprado) tem prioridade ABSOLUTA
   // sobre o nome/número do processo. O PNCP costuma retornar o número da
   // contratação em `title` (ex.: "nº 20260186 SEMED/2026") — isso é
@@ -1939,7 +1939,7 @@ function toResult(raw: RawItem): PriceResult {
   };
 }
 
-function applyJuridicScore(r: PriceResult, ultimosMeses: number): PriceResult {
+export function applyJuridicScore(r: PriceResult, ultimosMeses: number): PriceResult {
   let s = 0.4;
   if (r.homologado) s += 0.35;
   if (r.cnpj && r.cnpj.replace(/\D/g, "").length === 14) s += 0.1;

@@ -7,7 +7,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Json } from "@/integrations/supabase/types";
 import { classifyTriad } from "../extract/triad";
 
-const asJson = <T,>(v: T): Json => v as unknown as Json;
+export const asJson = <T,>(v: T): Json => v as unknown as Json;
 
 
 // ============================================================
@@ -16,9 +16,9 @@ const asJson = <T,>(v: T): Json => v as unknown as Json;
 // Janela de frescor padrão: 24h. Resultados mais novos são servidos do cache
 // imediatamente; resultados velhos ainda são servidos do cache mas a UI
 // dispara um refresh em background.
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+export const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-function normalizeQueryNorm(s: string): string {
+export function normalizeQueryNorm(s: string): string {
   return s
     .toLowerCase()
     .normalize("NFD")
@@ -28,7 +28,7 @@ function normalizeQueryNorm(s: string): string {
     .trim();
 }
 
-function filtersHash(d: {
+export function filtersHash(d: {
   uf?: string; modalidade?: string; unidade?: string;
   apenasHomologados?: boolean; valorMin?: number; valorMax?: number;
   mode?: string; keywords?: string[]; pagina?: number; tema?: string;
@@ -47,7 +47,7 @@ function filtersHash(d: {
   });
 }
 
-async function readCachedSearch(
+export async function readCachedSearch(
   query_norm: string,
   filters_hash: string,
 ): Promise<{ search: {
@@ -84,7 +84,7 @@ async function readCachedSearch(
   }
 }
 
-async function writeCachedSearch(opts: {
+export async function writeCachedSearch(opts: {
   query_norm: string;
   query_raw: string;
   filters_hash: string;
