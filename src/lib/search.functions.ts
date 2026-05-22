@@ -590,6 +590,165 @@ interface PncpItemRaw {
   ncmNbsCodigo?: string;
 }
 
+/**
+ * Portal de Compras Públicas (portaldecompraspublicas.com.br) — fonte
+ * alternativa que indexa licitações de centenas de prefeituras e órgãos.
+ * Diferente do PNCP, esta API devolve ITENS já granulares com valor
+ * unitário (valorReferencia) e melhor lance — não precisa de /itens
+ * de segundo nível nem do enrich do PNCP.
+ *
+ * Fluxo:
+ *  1. Endpoint A: lista processos por `objeto` (até 10 por página).
+ *  2. Endpoint B: para cada processo, baixa itens em paralelo (lote 10).
+ *  3. Filtra itens cuja descrição contenha algum token da query.
+ */
+interface PcpProcesso {
+  codigoLicitacao?: number | string;
+  razaoSocial?: string;
+  uf?: string;
+  municipio?: string;
+  dataAbertura?: string;
+  dataLicitacao?: string;
+  numero?: string;
+  ano?: string | number;
+  modalidade?: string;
+}
+interface PcpItem {
+  codigoItem?: number | string;
+  descricao?: string;
+  unidade?: string;
+  quantidade?: number;
+  valorReferencia?: number;
+  melhorLance?: number;
+  valorTotal?: number;
+  situacao?: string;
+}
+async function fetchPortalComprasPublicas(
+  query: string,
+  maxProcessos = 10,
+  budgetMs = 18_000,
+): Promise<RawItem[]> {
+  const term = query.trim();
+  if (term.length < 2) return [];
+  const deadline = Date.now() + budgetMs;
+  const SOURCE_NAME = "Portal de Compras Públicas";
+  const SOURCE_DOMAIN = "portaldecompraspublicas.com.br";
+  const BASE = "https://compras.api.portaldecompraspublicas.com.br/v2/licitacao";
+
+  // Endpoint A — processos por objeto (status 3 = abertos/em andamento)
+  const listUrl =
+    `${BASE}/processos?objeto=${encodeURIComponent(term)}` +
+    `&limitePagina=${maxProcessos}&pagina=1&codigoStatus=3`;
+  let processos: PcpProcesso[] = [];
+  try {
+    const ctl = new AbortController();
+    const to = setTimeout(() => ctl.abort(), 8_000);
+    const res = await fetch(listUrl, {
+      headers: { Accept: "application/json", "User-Agent": "LicitaPro/1.0" },
+      signal: ctl.signal,
+    });
+    clearTimeout(to);
+    if (!res.ok) {
+      console.warn(`[pcp] listing status=${res.status} term="${term}"`);
+      return [];
+    }
+    const json = (await res.json()) as { result?: PcpProcesso[]; data?: PcpProcesso[] } | PcpProcesso[];
+    processos = Array.isArray(json)
+      ? json
+      : (json.result ?? json.data ?? []);
+  } catch (e) {
+    console.warn(`[pcp] listing err term="${term}" err=${(e as Error).message}`);
+    return [];
+  }
+  if (!processos.length) return [];
+
+  // Endpoint B — itens por processo, em lotes de 10 concorrentes
+  const qLower = term.toLowerCase();
+  const qTokens = qLower.split(/\s+/).filter((t) => t.length > 2);
+  const out: RawItem[] = [];
+  const CONC = 10;
+  for (let i = 0; i < processos.length; i += CONC) {
+    if (Date.now() > deadline) {
+      console.warn(`[pcp] budget exceeded term="${term}" processed=${i}/${processos.length}`);
+      break;
+    }
+    const chunk = processos.slice(i, i + CONC);
+    const settled = await Promise.allSettled(
+      chunk.map(async (p) => {
+        const code = p.codigoLicitacao;
+        if (!code) return { processo: p, itens: [] as PcpItem[] };
+        const url = `${BASE}/${code}/itens?pagina=1`;
+        const ctl = new AbortController();
+        const to = setTimeout(() => ctl.abort(), 8_000);
+        try {
+          const res = await fetch(url, {
+            headers: { Accept: "application/json", "User-Agent": "LicitaPro/1.0" },
+            signal: ctl.signal,
+          });
+          clearTimeout(to);
+          if (!res.ok) return { processo: p, itens: [] as PcpItem[] };
+          const j = (await res.json()) as
+            | { itens?: { result?: PcpItem[] }; result?: PcpItem[] }
+            | PcpItem[];
+          const itens: PcpItem[] = Array.isArray(j)
+            ? j
+            : (j.itens?.result ?? j.result ?? []);
+          return { processo: p, itens };
+        } catch {
+          clearTimeout(to);
+          return { processo: p, itens: [] as PcpItem[] };
+        }
+      }),
+    );
+
+    for (const s of settled) {
+      if (s.status !== "fulfilled") continue;
+      const { processo, itens } = s.value;
+      if (!itens.length) continue;
+      const relevant = qTokens.length
+        ? itens.filter((it) => {
+            const d = (it.descricao ?? "").toLowerCase();
+            return d && qTokens.some((t) => d.includes(t));
+          })
+        : itens;
+      const useItems = relevant.length > 0 ? relevant : [];
+      for (const it of useItems) {
+        const unit = validPrice(it.melhorLance) ?? validPrice(it.valorReferencia);
+        if (!unit && !validPrice(it.valorReferencia)) continue;
+        const id = `pcp-${processo.codigoLicitacao}-${it.codigoItem ?? out.length}`;
+        out.push({
+          id,
+          numero: String(processo.numero ?? processo.codigoLicitacao ?? ""),
+          ano: processo.ano,
+          orgao_nome: processo.razaoSocial,
+          municipio_nome: processo.municipio,
+          uf: processo.uf,
+          descricao: it.descricao,
+          objeto_compra: it.descricao,
+          unidade_medida: it.unidade,
+          quantidade: typeof it.quantidade === "number" ? it.quantidade : undefined,
+          valor_unitario: unit,
+          valor_unitario_estimado: validPrice(it.valorReferencia),
+          valor_unitario_homologado: validPrice(it.melhorLance),
+          valor_total_item: validPrice(it.valorTotal),
+          modalidade_licitacao_nome: processo.modalidade,
+          situacao_nome: it.situacao ?? processo.modalidade,
+          data: processo.dataAbertura ?? processo.dataLicitacao,
+          tipo_documento: "outro",
+          url: `https://compras.publicas.gov.br/ProcessoEletronico/Acompanhamento/${processo.codigoLicitacao}`,
+          item_url: `https://compras.publicas.gov.br/ProcessoEletronico/Acompanhamento/${processo.codigoLicitacao}`,
+          _source: "PortalComprasPublicas",
+          _sourceName: SOURCE_NAME,
+          _sourceDomain: SOURCE_DOMAIN,
+          _valorTipo: validPrice(it.melhorLance) ? "unitario_homologado" : "unitario_estimado",
+        });
+      }
+    }
+  }
+  console.info(`[pcp] term="${term}" processos=${processos.length} items=${out.length}`);
+  return out;
+}
+
 function validPrice(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
