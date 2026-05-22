@@ -798,6 +798,11 @@ export async function enrichWithPNCPItems(raw: RawItem[], query: string, limit =
       expanded.push({
         ...parent,
         id: `${parent.id ?? `${parent.orgao_cnpj}-${parent.ano}-${parent.numero}`}-it${it.numeroItem ?? Math.random().toString(36).slice(2, 6)}`,
+        // Sobrescreve o `title` herdado do parent (no M2A é o slug do processo,
+        // ex.: "aquisicao de material de expediente") com a descrição real do
+        // ITEM — caso contrário o toResult escolhe o slug como título por ter
+        // tamanho "bonito" e a descrição real (longa) perde no ranking.
+        title: it.descricao ?? parent.title,
         objeto_compra: it.descricao ?? parent.objeto_compra,
         descricao: it.descricao ?? parent.descricao,
         valor_unitario_homologado: homologado,
