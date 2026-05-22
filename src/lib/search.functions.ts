@@ -528,9 +528,10 @@ async function fetchPNCP(query: string, pagina: number, tamanho = 50): Promise<R
  * Custo controlado: 1 página × até `cap` processos × 1 GET cada.
  * Default cap=15 para inline (search ao vivo). Crawler em background usa 60.
  */
-async function fetchM2A(searchTerm: string, cap = 15): Promise<RawItem[]> {
+async function fetchM2A(searchTerm: string, cap = 15, budgetMs = 18_000): Promise<RawItem[]> {
   const term = searchTerm.trim();
   if (term.length < 2) return [];
+  const deadline = Date.now() + budgetMs;
   let listing: { id: string; slug: string; url: string }[] = [];
   try {
     listing = await fetchM2aListing({ search: term, situacao: 7, page: 1 });
@@ -544,6 +545,10 @@ async function fetchM2A(searchTerm: string, cap = 15): Promise<RawItem[]> {
   const out: RawItem[] = [];
   const CONC = 5;
   for (let i = 0; i < capped.length; i += CONC) {
+    if (Date.now() > deadline) {
+      console.warn(`[m2a] budget exceeded term="${term}" processed=${out.length}/${capped.length}`);
+      break;
+    }
     const chunk = capped.slice(i, i + CONC);
     const settled = await Promise.allSettled(chunk.map((p) => fetchM2aPncpRef(p.url)));
     settled.forEach((s, idx) => {
