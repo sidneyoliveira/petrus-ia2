@@ -14,6 +14,54 @@ import { searchComprasGovByKeyword, type ComprasGovUnified } from "./compras-gov
 const asJson = <T,>(v: T): Json => v as unknown as Json;
 
 // ============================================================
+// PNCP HTTP helper — User-Agent profissional + exp-backoff em 429/5xx
+// ============================================================
+// A API do PNCP é instável sob carga (429/502/503/504 frequentes).
+// Centraliza headers, timeout e retry para todas as chamadas PNCP.
+const PNCP_UA = "Petrus-IA-DataEngine/1.0 (+cotacao)";
+
+async function pncpFetchJson<T>(
+  url: string,
+  opts: { timeoutMs?: number; attempts?: number } = {},
+): Promise<T | null> {
+  const attempts = opts.attempts ?? 3;
+  const timeoutMs = opts.timeoutMs ?? 12_000;
+  let delay = 700;
+  for (let i = 0; i < attempts; i++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        headers: { Accept: "application/json", "User-Agent": PNCP_UA },
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      // Retry em 429 e 5xx (com backoff exponencial + jitter leve)
+      if (res.status === 429 || (res.status >= 500 && res.status <= 599)) {
+        if (i === attempts - 1) {
+          console.warn(`[pncp] giving up url=${url.slice(0, 120)} status=${res.status}`);
+          return null;
+        }
+        await new Promise((r) => setTimeout(r, delay + Math.floor(Math.random() * 250)));
+        delay *= 2;
+        continue;
+      }
+      if (!res.ok) return null;
+      return (await res.json()) as T;
+    } catch (e) {
+      clearTimeout(timer);
+      if (i === attempts - 1) {
+        console.warn(`[pncp] fetch err url=${url.slice(0, 120)} err=${(e as Error).message}`);
+        return null;
+      }
+      await new Promise((r) => setTimeout(r, delay + Math.floor(Math.random() * 250)));
+      delay *= 2;
+    }
+  }
+  return null;
+}
+
+// ============================================================
 // CACHE — quote_searches + quote_items
 // ============================================================
 // Janela de frescor padrão: 24h. Resultados mais novos são servidos do cache
@@ -441,45 +489,24 @@ async function resolvePncpCompraFromContract(
 ): Promise<{ cnpj: string; ano: string; sequencial: string; fornecedor?: string } | null> {
   const seq = String(Number(String(sequencialContrato).replace(/\D/g, "")) || sequencialContrato);
   const url = `https://pncp.gov.br/pncp-api/v1/orgaos/${cnpj}/contratos/${ano}/${seq}`;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 12_000);
-  try {
-    const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
-      signal: ctrl.signal,
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as Record<string, unknown>;
-    const compra = parseNumeroControlePncpCompra(data.numeroControlePncpCompra ?? data.numeroControlePNCPCompra);
-    if (!compra) return null;
-    return {
-      ...compra,
-      fornecedor: typeof data.nomeRazaoSocialFornecedor === "string" ? data.nomeRazaoSocialFornecedor : undefined,
-    };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+  const data = await pncpFetchJson<Record<string, unknown>>(url);
+  if (!data) return null;
+  const compra = parseNumeroControlePncpCompra(data.numeroControlePncpCompra ?? data.numeroControlePNCPCompra);
+  if (!compra) return null;
+  return {
+    ...compra,
+    fornecedor: typeof data.nomeRazaoSocialFornecedor === "string" ? data.nomeRazaoSocialFornecedor : undefined,
+  };
 }
 
 async function fetchPNCP(query: string, pagina: number, tamanho = 50): Promise<RawItem[]> {
   const tipos = "edital,ata,contrato";
   const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=${tipos}&ordenacao=-data&pagina=${pagina}&pagina_tam=${tamanho}&status=todos`;
-  try {
-    const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
-    });
-    if (!res.ok) {
-      console.warn("PNCP search HTTP", res.status);
-      return [];
-    }
-    const data = (await res.json()) as { items?: RawItem[]; resultados?: RawItem[] };
-    return data.items ?? data.resultados ?? [];
-  } catch (e) {
-    console.error("PNCP fetch error", e);
-    return [];
-  }
+  const data = await pncpFetchJson<{ items?: RawItem[]; resultados?: RawItem[] }>(url, {
+    timeoutMs: 15_000,
+  });
+  if (!data) return [];
+  return data.items ?? data.resultados ?? [];
 }
 
 // PNCP API de consulta — retorna ITENS individuais de uma contratação/ata/contrato,
@@ -515,23 +542,16 @@ async function fetchPncpItens(
   const all: PncpItemRaw[] = [];
   for (let pagina = 1; pagina <= 5; pagina++) {
     const url = `https://pncp.gov.br/pncp-api/v1/orgaos/${cnpj}/compras/${ano}/${seq}/itens?pagina=${pagina}&tamanhoPagina=100`;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 12_000);
-    try {
-      const res = await fetch(url, {
-        headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
-        signal: ctrl.signal,
-      });
-      if (!res.ok) break;
-      const j = (await res.json()) as PncpItemRaw[] | { data?: PncpItemRaw[] };
-      const page = Array.isArray(j) ? j : (j.data ?? []);
-      all.push(...page);
-      if (page.length < 100) break;
-    } catch {
-      break;
-    } finally {
-      clearTimeout(timer);
-    }
+    const j = await pncpFetchJson<
+      PncpItemRaw[] | { data?: PncpItemRaw[]; totalPaginas?: number; totalRegistros?: number }
+    >(url);
+    if (!j) break;
+    const page = Array.isArray(j) ? j : (j.data ?? []);
+    all.push(...page);
+    // Respeita totalPaginas do PNCP quando disponível; senão usa heurística por tamanho.
+    const totalPaginas = !Array.isArray(j) ? j.totalPaginas : undefined;
+    if (typeof totalPaginas === "number" && pagina >= totalPaginas) break;
+    if (page.length < 100) break;
   }
   return all;
 }
@@ -561,31 +581,21 @@ async function fetchPncpItemResultado(
 ): Promise<PncpResultadoRaw | null> {
   const seq = String(Number(String(sequencial).replace(/\D/g, "")) || sequencial);
   const url = `https://pncp.gov.br/api/pncp/v1/orgaos/${cnpj}/compras/${ano}/${seq}/itens/${numeroItem}/resultados`;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 10_000);
-  try {
-    const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
-      signal: ctrl.signal,
-    });
-    if (!res.ok) return null;
-    const j = (await res.json()) as PncpResultadoRaw[] | { data?: PncpResultadoRaw[] };
-    const arr = Array.isArray(j) ? j : (j.data ?? []);
-    // Filtra cancelados e mantém o vencedor (sequencialResultado === 1, ou o de menor preço unitário).
-    const ativos = arr.filter((r) => !r.dataCancelamento && validPrice(r.valorUnitarioHomologado));
-    if (ativos.length === 0) return null;
-    ativos.sort((a, b) => {
-      const sa = a.sequencialResultado ?? 999;
-      const sb = b.sequencialResultado ?? 999;
-      if (sa !== sb) return sa - sb;
-      return (a.valorUnitarioHomologado ?? Infinity) - (b.valorUnitarioHomologado ?? Infinity);
-    });
-    return ativos[0];
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+  const j = await pncpFetchJson<PncpResultadoRaw[] | { data?: PncpResultadoRaw[] }>(url, {
+    timeoutMs: 10_000,
+  });
+  if (!j) return null;
+  const arr = Array.isArray(j) ? j : (j.data ?? []);
+  // Filtra cancelados e mantém o vencedor (sequencialResultado === 1, ou o de menor preço unitário).
+  const ativos = arr.filter((r) => !r.dataCancelamento && validPrice(r.valorUnitarioHomologado));
+  if (ativos.length === 0) return null;
+  ativos.sort((a, b) => {
+    const sa = a.sequencialResultado ?? 999;
+    const sb = b.sequencialResultado ?? 999;
+    if (sa !== sb) return sa - sb;
+    return (a.valorUnitarioHomologado ?? Infinity) - (b.valorUnitarioHomologado ?? Infinity);
+  });
+  return ativos[0];
 }
 
 /**
