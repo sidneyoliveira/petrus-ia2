@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import { Search, Loader2, Sparkles, Download, FileText, FileJson, FileSpreadsheet, SlidersHorizontal, AlertCircle, Database, RefreshCw, LayoutGrid, Rows3, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { SiteHeader } from "@/components/SiteHeader";
@@ -9,8 +9,8 @@ import { SiteFooter } from "@/components/SiteFooter";
 import { ResultCard } from "@/components/ResultCard";
 import { ResultsTable } from "@/components/ResultsTable";
 import { ResultModal } from "@/components/ResultModal";
-import { searchPrices } from "@/lib/search.functions";
 import { searchDbItems } from "@/lib/db-search.functions";
+import { useSearchStream } from "@/lib/search-stream";
 import { exportCSV, exportJSON, exportTXT } from "@/lib/export";
 import { useBasket } from "@/lib/basket";
 import type { PriceResult } from "@/lib/types";
@@ -79,9 +79,7 @@ function Buscar() {
   }, [pageSize]);
   const [page, setPage] = useState(1);
 
-  const callSearch = useServerFn(searchPrices);
   const callDbSearch = useServerFn(searchDbItems);
-  const queryClient = useQueryClient();
 
   // A busca só dispara via submit (botão "Buscar" ou Enter).
   // Não há mais debounce que altera a URL enquanto o usuário digita.
@@ -113,25 +111,41 @@ function Buscar() {
     [keywordsInput],
   );
 
-  const { data, isFetching, error, refetch } = useQuery({
-    queryKey: ["search", q, tema, mode, parsedKeywords.join("|")],
-    enabled: q.trim().length >= 2,
-    staleTime: 30 * 60_000,
-    gcTime: 24 * 60 * 60_000,
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    queryFn: () =>
-      callSearch({
-        data: {
+  // Busca STREAMING — emite itens conforme cada fonte responde.
+  const streamKey = `${q}|${tema}|${mode}|${parsedKeywords.join(",")}`;
+  const stream = useSearchStream(
+    q.trim().length >= 2
+      ? {
           query: q.trim(),
           tema: tema.trim() || undefined,
           pagina: 1,
           mode,
           keywords: parsedKeywords.length ? parsedKeywords : undefined,
-        },
-      }),
-  });
+        }
+      : null,
+    streamKey,
+  );
+
+  // Shape compatível com o restante do componente (que esperava o retorno
+  // do useQuery anterior). Assim mantemos as referências a `data`, `isFetching`,
+  // `error`, `refetch` sem reescrever toda a JSX.
+  const data = useMemo(() => {
+    if (stream.items.length === 0 && !stream.done) return undefined;
+    return {
+      results: stream.items,
+      total: stream.items.length,
+      pagina: 1,
+      pageSize: 20,
+      query: q,
+      tookMs: stream.tookMs,
+      sources: stream.finalSources ?? [],
+      fromCache: stream.fromCache,
+      cachedAt: stream.final?.cachedAt,
+    };
+  }, [stream.items, stream.done, stream.tookMs, stream.finalSources, stream.fromCache, stream.final?.cachedAt, q]);
+  const isFetching = !stream.done && q.trim().length >= 2;
+  const error = stream.error;
+  const refetch = stream.refetch;
 
   // DB-first: busca instantânea no banco local (zero créditos) em paralelo
   // com a busca remota. Resultados aparecem no topo enquanto a remota carrega.
@@ -145,41 +159,9 @@ function Buscar() {
     queryFn: () => callDbSearch({ data: { query: q.trim(), limit: 30 } }),
   });
 
-  // Refresh em background quando o resultado vem do cache.
-  // Roda a varredura completa, atualiza o banco e invalida a query
-  // para a UI re-renderizar com os dados frescos.
-  const isCached = !!data?.fromCache;
-  const [refreshing, setRefreshing] = useState(false);
-  useEffect(() => {
-    if (!isCached || q.trim().length < 2) return;
-    let cancelled = false;
-    setRefreshing(true);
-    callSearch({
-      data: {
-        query: q.trim(),
-        tema: tema.trim() || undefined,
-        pagina: 1,
-        mode,
-        keywords: parsedKeywords.length ? parsedKeywords : undefined,
-        forceRefresh: true,
-      },
-    })
-      .then((fresh) => {
-        if (cancelled) return;
-        queryClient.setQueryData(
-          ["search", q, tema, mode, parsedKeywords.join("|")],
-          fresh,
-        );
-      })
-      .catch((e) => console.warn("background refresh failed", e))
-      .finally(() => {
-        if (!cancelled) setRefreshing(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCached, q, tema, mode, parsedKeywords.join("|")]);
+  // Cache refresh removido: o stream já trata cache (HIT = entrega imediata,
+  // MISS = streaming). Se o usuário quiser revarrer fontes, basta clicar "Buscar".
+  const refreshing = false;
 
   const filtered = useMemo(() => {
     // Merge: resultados do banco local + remotos, dedupe por id, banco vai
