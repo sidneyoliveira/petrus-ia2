@@ -312,10 +312,18 @@ export const Route = createFileRoute("/api/public/search/stream")({
               // 1) expansão + catálogo. Padrão = literal; só expandimos via IA
               // quando o usuário pediu explicitamente o modo "semantic".
               const mode = filters.mode ?? "exact";
-              const variants =
+              const baseVariants =
                 mode === "exact" || mode === "all_keywords"
                   ? [filters.query]
                   : await expandQuery(filters.query, apiKey);
+              // Quando o usuário informa um TEMA (ex.: "fardamento") junto do
+              // item específico (ex.: "camiseta polo"), buscamos por AMBOS em
+              // todas as fontes — tema costuma aparecer no objeto do processo
+              // enquanto o item específico só aparece dentro dos /itens.
+              const variants =
+                filters.tema && filters.tema.length >= 2 && filters.tema !== filters.query
+                  ? [...baseVariants, filters.tema]
+                  : baseVariants;
               const catalog = await loadActiveSources();
               const siteFilters = catalog.map((s) => s.domain);
               const tceDomains = catalog

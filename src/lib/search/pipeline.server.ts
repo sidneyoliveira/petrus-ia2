@@ -1027,13 +1027,18 @@ export async function fetchTceCeView(host: string, view: string, query: string):
   });
   const url = `${host}/${view}?${params.toString()}`;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 10_000);
+  // TCE-CE costuma ficar indisponível (geo-block / hosts fora do ar).
+  // Timeout agressivo para não atrasar o restante do pipeline.
+  const timer = setTimeout(() => ctrl.abort(), 4_000);
   try {
     const res = await fetch(url, {
       headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
       signal: ctrl.signal,
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.warn(`[tce-ce] ${view} HTTP ${res.status} em ${host}`);
+      return [];
+    }
     const j = (await res.json().catch(() => null)) as unknown;
     if (Array.isArray(j)) return j as TCECERow[];
     if (j && typeof j === "object") {
@@ -1044,7 +1049,9 @@ export async function fetchTceCeView(host: string, view: string, query: string):
       }
     }
     return [];
-  } catch {
+  } catch (e) {
+    const msg = (e as Error)?.message ?? "erro";
+    console.warn(`[tce-ce] ${view} falhou em ${host}: ${msg.slice(0, 80)}`);
     return [];
   } finally {
     clearTimeout(timer);
