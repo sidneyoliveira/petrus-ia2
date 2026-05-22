@@ -33,6 +33,9 @@ export function SiteHeader() {
               </span>
             )}
           </Link>
+          {auth.isAuthenticated && (
+            <Link to="/cestas" className="px-3 py-1.5 rounded-md hover:text-foreground transition-smooth" activeProps={{ className: "text-foreground" }}>Cestas</Link>
+          )}
           <Link to="/sobre" className="px-3 py-1.5 rounded-md hover:text-foreground transition-smooth" activeProps={{ className: "text-foreground" }}>Sobre</Link>
         </nav>
         <div className="flex items-center gap-2">
