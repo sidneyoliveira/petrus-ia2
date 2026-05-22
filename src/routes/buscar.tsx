@@ -321,9 +321,26 @@ function Buscar() {
                   maxLength={200}
                 />
                 {isFetching && <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />}
-                <button type="submit" className="hidden sm:inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 transition-smooth">
+                <button
+                  type="button"
+                  onClick={() => setMode((m) => (m === "semantic" ? "exact" : "semantic"))}
+                  title={
+                    mode === "semantic"
+                      ? "IA está expandindo sua busca com sinônimos. Clique para voltar à busca literal."
+                      : "Clique para deixar a IA expandir a busca com sinônimos relacionados."
+                  }
+                  className={`hidden sm:inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium border transition-smooth ${
+                    mode === "semantic"
+                      ? "bg-accent/15 border-accent text-accent"
+                      : "bg-card border-border text-muted-foreground hover:bg-secondary"
+                  }`}
+                >
                   <Sparkles className="h-3.5 w-3.5" />
-                  Buscar com IA
+                  {mode === "semantic" ? "IA ativa" : "Expandir com IA"}
+                </button>
+                <button type="submit" className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 transition-smooth">
+                  <Search className="h-3.5 w-3.5" />
+                  Buscar
                 </button>
               </div>
               <div className="flex items-center gap-2 border-t border-border/60 pt-2">
