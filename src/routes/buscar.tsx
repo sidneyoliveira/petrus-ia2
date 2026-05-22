@@ -81,15 +81,25 @@ function Buscar() {
   const callDbSearch = useServerFn(searchDbItems);
   const queryClient = useQueryClient();
 
-  // Debounce input -> URL q
+  // A busca só dispara via submit (botão "Buscar" ou Enter).
+  // Não há mais debounce que altera a URL enquanto o usuário digita.
+
+  // Restaura o último termo pesquisado ao voltar para /buscar sem ?q.
+  // Assim o usuário reencontra os resultados sem precisar repesquisar.
   useEffect(() => {
-    const t = setTimeout(() => {
-      if (input.trim() !== q) {
-        navigate({ to: "/buscar", search: { q: input.trim() } });
+    if (typeof window === "undefined") return;
+    if (q.trim().length === 0) {
+      const last = window.localStorage.getItem("buscar:lastQ");
+      if (last && last.trim().length >= 2) {
+        setInput(last);
+        navigate({ to: "/buscar", search: { q: last }, replace: true });
       }
-    }, 450);
-    return () => clearTimeout(t);
-  }, [input, q, navigate]);
+    } else {
+      window.localStorage.setItem("buscar:lastQ", q);
+      if (input !== q) setInput(q);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
 
   const parsedKeywords = useMemo(
     () =>
@@ -104,7 +114,11 @@ function Buscar() {
   const { data, isFetching, error, refetch } = useQuery({
     queryKey: ["search", q, mode, parsedKeywords.join("|")],
     enabled: q.trim().length >= 2,
-    staleTime: 60_000,
+    staleTime: 30 * 60_000,
+    gcTime: 24 * 60 * 60_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     queryFn: () =>
       callSearch({
         data: {
@@ -121,7 +135,10 @@ function Buscar() {
   const { data: dbData } = useQuery({
     queryKey: ["search-db", q],
     enabled: q.trim().length >= 2,
-    staleTime: 5 * 60_000,
+    staleTime: 30 * 60_000,
+    gcTime: 24 * 60 * 60_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
     queryFn: () => callDbSearch({ data: { query: q.trim(), limit: 30 } }),
   });
 
