@@ -726,9 +726,6 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
             if (res.nomeRazaoSocialFornecedor && !parent.fornecedor) {
               parent.fornecedor = res.nomeRazaoSocialFornecedor;
             }
-            if (res.niFornecedor && !parent.cnpj) {
-              parent.cnpj = res.niFornecedor;
-            }
           }
         }
       }
