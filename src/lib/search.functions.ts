@@ -1843,24 +1843,28 @@ export const searchPrices = createServerFn({ method: "POST" })
       knownDomains,
     );
 
-    // Filtro por palavras-chave obrigatórias
+    // Palavras-chave obrigatórias e modo exato — tratados como SINAIS
+    // de ranqueamento, não como exclusões. Itens que batem vão para o
+    // topo; os demais permanecem visíveis como fallback, para o usuário
+    // nunca ficar com a tela vazia quando não houver match perfeito.
     if (data.keywords && data.keywords.length > 0) {
       const kws = data.keywords.map((k) => k.toLowerCase());
-      results = results.filter((r) => {
+      for (const r of results) {
         const blob = `${r.titulo} ${r.descricao}`.toLowerCase();
-        return kws.every((k) => blob.includes(k));
-      });
+        const missing = kws.filter((k) => !blob.includes(k)).length;
+        if (missing > 0) addPen(r.id, 0.08 * missing);
+      }
     }
 
-    // Filtro modo exato — todos os tokens do título devem aparecer
     if (mode === "exact" || mode === "all_keywords") {
       const need = tokenize(data.query);
       if (need.length > 0) {
-        results = results.filter((r) => {
+        for (const r of results) {
           const blob = tokenize(`${r.titulo} ${r.descricao}`);
           const set = new Set(blob);
-          return need.every((t) => set.has(t));
-        });
+          const missing = need.filter((t) => !set.has(t)).length;
+          if (missing > 0) addPen(r.id, 0.05 * missing);
+        }
       }
     }
 
