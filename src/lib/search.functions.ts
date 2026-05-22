@@ -581,31 +581,21 @@ async function fetchPncpItemResultado(
 ): Promise<PncpResultadoRaw | null> {
   const seq = String(Number(String(sequencial).replace(/\D/g, "")) || sequencial);
   const url = `https://pncp.gov.br/api/pncp/v1/orgaos/${cnpj}/compras/${ano}/${seq}/itens/${numeroItem}/resultados`;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 10_000);
-  try {
-    const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
-      signal: ctrl.signal,
-    });
-    if (!res.ok) return null;
-    const j = (await res.json()) as PncpResultadoRaw[] | { data?: PncpResultadoRaw[] };
-    const arr = Array.isArray(j) ? j : (j.data ?? []);
-    // Filtra cancelados e mantém o vencedor (sequencialResultado === 1, ou o de menor preço unitário).
-    const ativos = arr.filter((r) => !r.dataCancelamento && validPrice(r.valorUnitarioHomologado));
-    if (ativos.length === 0) return null;
-    ativos.sort((a, b) => {
-      const sa = a.sequencialResultado ?? 999;
-      const sb = b.sequencialResultado ?? 999;
-      if (sa !== sb) return sa - sb;
-      return (a.valorUnitarioHomologado ?? Infinity) - (b.valorUnitarioHomologado ?? Infinity);
-    });
-    return ativos[0];
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+  const j = await pncpFetchJson<PncpResultadoRaw[] | { data?: PncpResultadoRaw[] }>(url, {
+    timeoutMs: 10_000,
+  });
+  if (!j) return null;
+  const arr = Array.isArray(j) ? j : (j.data ?? []);
+  // Filtra cancelados e mantém o vencedor (sequencialResultado === 1, ou o de menor preço unitário).
+  const ativos = arr.filter((r) => !r.dataCancelamento && validPrice(r.valorUnitarioHomologado));
+  if (ativos.length === 0) return null;
+  ativos.sort((a, b) => {
+    const sa = a.sequencialResultado ?? 999;
+    const sb = b.sequencialResultado ?? 999;
+    if (sa !== sb) return sa - sb;
+    return (a.valorUnitarioHomologado ?? Infinity) - (b.valorUnitarioHomologado ?? Infinity);
+  });
+  return ativos[0];
 }
 
 /**
