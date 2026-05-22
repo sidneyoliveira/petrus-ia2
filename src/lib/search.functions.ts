@@ -535,6 +535,58 @@ async function fetchPncpItens(
   return all;
 }
 
+// Endpoint `/itens/{numeroItem}/resultados` — devolve o valor efetivamente
+// HOMOLOGADO do item (valorUnitarioHomologado, valorTotalHomologado,
+// quantidadeHomologada e o fornecedor vencedor). Quando disponível, é a
+// fonte mais confiável de preço — supera estimado e supera o que vem em
+// /itens, que muitas vezes só traz `valorUnitarioEstimado`.
+interface PncpResultadoRaw {
+  numeroItem?: number;
+  sequencialResultado?: number;
+  valorUnitarioHomologado?: number;
+  valorTotalHomologado?: number;
+  quantidadeHomologada?: number;
+  nomeRazaoSocialFornecedor?: string;
+  niFornecedor?: string;
+  situacaoCompraItemResultadoNome?: string;
+  dataCancelamento?: string | null;
+}
+
+async function fetchPncpItemResultado(
+  cnpj: string,
+  ano: string | number,
+  sequencial: string | number,
+  numeroItem: number,
+): Promise<PncpResultadoRaw | null> {
+  const seq = String(Number(String(sequencial).replace(/\D/g, "")) || sequencial);
+  const url = `https://pncp.gov.br/api/pncp/v1/orgaos/${cnpj}/compras/${ano}/${seq}/itens/${numeroItem}/resultados`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10_000);
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as PncpResultadoRaw[] | { data?: PncpResultadoRaw[] };
+    const arr = Array.isArray(j) ? j : (j.data ?? []);
+    // Filtra cancelados e mantém o vencedor (sequencialResultado === 1, ou o de menor preço unitário).
+    const ativos = arr.filter((r) => !r.dataCancelamento && validPrice(r.valorUnitarioHomologado));
+    if (ativos.length === 0) return null;
+    ativos.sort((a, b) => {
+      const sa = a.sequencialResultado ?? 999;
+      const sb = b.sequencialResultado ?? 999;
+      if (sa !== sb) return sa - sb;
+      return (a.valorUnitarioHomologado ?? Infinity) - (b.valorUnitarioHomologado ?? Infinity);
+    });
+    return ativos[0];
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Para cada resultado PNCP (que representa um PROCESSO inteiro), tenta buscar
  * os ITENS individuais e EXPANDIR em múltiplos RawItem — cada item com seu
@@ -638,6 +690,46 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
     // valor unitário mesmo assim (podem ser variantes/sinônimos) e marca
     // como fallback de menor prioridade.
     const useItems = relevant.length > 0 ? relevant : items;
+    // Tenta enriquecer com /resultados (valor HOMOLOGADO real) para itens
+    // que ainda não trazem valorUnitarioHomologado direto na lista /itens.
+    const targetForResultados = {
+      cnpj: String(parent.orgao_cnpj ?? "").replace(/\D/g, ""),
+      ano: String(parent.ano ?? ""),
+      seq: String(parent.numero ?? "").replace(/\D/g, ""),
+    };
+    if (targetForResultados.cnpj.length === 14 && targetForResultados.ano && targetForResultados.seq) {
+      const RES_CONCURRENCY = 6;
+      const needsResultado = useItems.filter(
+        (it) => typeof it.numeroItem === "number" && !validPrice(it.valorUnitarioHomologado),
+      );
+      for (let i = 0; i < needsResultado.length; i += RES_CONCURRENCY) {
+        const chunk = needsResultado.slice(i, i + RES_CONCURRENCY);
+        const settled = await Promise.allSettled(
+          chunk.map((it) =>
+            fetchPncpItemResultado(
+              targetForResultados.cnpj,
+              targetForResultados.ano,
+              targetForResultados.seq,
+              it.numeroItem as number,
+            ).then((res) => ({ it, res })),
+          ),
+        );
+        for (const s of settled) {
+          if (s.status !== "fulfilled" || !s.value.res) continue;
+          const { it, res } = s.value;
+          if (validPrice(res.valorUnitarioHomologado)) {
+            it.valorUnitarioHomologado = res.valorUnitarioHomologado;
+            if (validPrice(res.valorTotalHomologado)) it.valorTotalHomologado = res.valorTotalHomologado;
+            if (typeof res.quantidadeHomologada === "number" && res.quantidadeHomologada > 0)
+              it.quantidade = res.quantidadeHomologada;
+            // Vincula fornecedor vencedor ao item via parent (será propagado abaixo).
+            if (res.nomeRazaoSocialFornecedor && !parent.fornecedor) {
+              parent.fornecedor = res.nomeRazaoSocialFornecedor;
+            }
+          }
+        }
+      }
+    }
     for (const it of useItems) {
       const homologado = validPrice(it.valorUnitarioHomologado);
       const estimado = validPrice(it.valorUnitarioEstimado);
