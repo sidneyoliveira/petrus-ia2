@@ -1843,6 +1843,13 @@ export const searchPrices = createServerFn({ method: "POST" })
       knownDomains,
     );
 
+    // Sistema de penalidades suaves (declarado cedo p/ permitir uso pelos
+    // blocos abaixo). Itens com penalidade não são removidos — apenas
+    // descem no ranking, garantindo que a tela nunca fique vazia.
+    const softPenalty = new Map<string, number>();
+    const addPen = (id: string, p: number) =>
+      softPenalty.set(id, (softPenalty.get(id) ?? 0) + p);
+
     // Palavras-chave obrigatórias e modo exato — tratados como SINAIS
     // de ranqueamento, não como exclusões. Itens que batem vão para o
     // topo; os demais permanecem visíveis como fallback, para o usuário
@@ -1894,9 +1901,6 @@ export const searchPrices = createServerFn({ method: "POST" })
     // aplicados como SINAIS DE RANQUEAMENTO, não como exclusões duras.
     // Cada falha vira uma penalidade no score final, mas o item permanece
     // visível como fallback (o usuário ainda decide).
-    const softPenalty = new Map<string, number>();
-    const addPen = (id: string, p: number) =>
-      softPenalty.set(id, (softPenalty.get(id) ?? 0) + p);
     if (data.uf) {
       const uf = data.uf.toUpperCase();
       for (const r of results) if ((r.uf ?? "").toUpperCase() !== uf) addPen(r.id, 0.15);
