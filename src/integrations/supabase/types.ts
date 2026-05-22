@@ -324,6 +324,7 @@ export type Database = {
           source_excerpt: string | null
           source_payload_raw: Json | null
           titulo: string
+          tsv: unknown
           uf: string | null
           unidade: string | null
           updated_at: string
@@ -372,6 +373,7 @@ export type Database = {
           source_excerpt?: string | null
           source_payload_raw?: Json | null
           titulo: string
+          tsv?: unknown
           uf?: string | null
           unidade?: string | null
           updated_at?: string
@@ -420,6 +422,7 @@ export type Database = {
           source_excerpt?: string | null
           source_payload_raw?: Json | null
           titulo?: string
+          tsv?: unknown
           uf?: string | null
           unidade?: string | null
           updated_at?: string
@@ -637,8 +640,42 @@ export type Database = {
           valor_total: number
         }[]
       }
+      quote_items_tsv: {
+        Args: {
+          _descricao: string
+          _fornecedor: string
+          _objeto: string
+          _orgao: string
+          _titulo: string
+        }
+        Returns: unknown
+      }
+      search_quote_items_fts: {
+        Args: { _limit?: number; _query: string }
+        Returns: {
+          cnpj: string
+          data: string
+          descricao: string
+          fornecedor: string
+          homologado: boolean
+          id: string
+          orgao: string
+          origem: string
+          payload: Json
+          quantidade: number
+          rank: number
+          titulo: string
+          uf: string
+          unidade: string
+          updated_at: string
+          url: string
+          valor: number
+          valor_total: number
+        }[]
+      }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      unaccent: { Args: { "": string }; Returns: string }
     }
     Enums: {
       app_role: "admin" | "user"
