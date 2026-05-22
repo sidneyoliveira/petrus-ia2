@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import { backfillTriad, backfillHeal } from "@/lib/backfill.functions";
-import { triggerBackfill } from "@/lib/inngest/trigger.functions";
+import { triggerBackfill, triggerM2aDiscover } from "@/lib/inngest/trigger.functions";
 import {
   listHarvestQueries,
   addHarvestQuery,
@@ -38,10 +38,13 @@ function AdminPage() {
   const runTriad = useServerFn(backfillTriad);
   const runHeal = useServerFn(backfillHeal);
   const runBackfill = useServerFn(triggerBackfill);
+  const runM2a = useServerFn(triggerM2aDiscover);
   const [triadLog, setTriadLog] = useState<string>("");
   const [healLog, setHealLog] = useState<string>("");
   const [pncpLog, setPncpLog] = useState<string>("");
-  const [busy, setBusy] = useState<"triad" | "heal" | "pncp" | null>(null);
+  const [m2aLog, setM2aLog] = useState<string>("");
+  const [m2aTerms, setM2aTerms] = useState<string>("caderno, papel A4, caneta esferográfica");
+  const [busy, setBusy] = useState<"triad" | "heal" | "pncp" | "m2a" | null>(null);
 
   async function doTriad() {
     setBusy("triad");
@@ -77,6 +80,21 @@ function AdminPage() {
       setPncpLog(JSON.stringify(r, null, 2) + "\n\nAcompanhe execução no dashboard do Inngest.");
     } catch (e) {
       setPncpLog(`Erro: ${(e as Error).message}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function doM2a() {
+    const terms = m2aTerms.split(",").map((t) => t.trim()).filter(Boolean).slice(0, 20);
+    if (terms.length === 0) { setM2aLog("Informe ao menos 1 termo."); return; }
+    setBusy("m2a");
+    setM2aLog(`Disparando ${terms.length} termo(s) no Inngest...`);
+    try {
+      const r = await runM2a({ data: { terms, situacao: 7, maxPages: 3 } });
+      setM2aLog(JSON.stringify(r, null, 2) + "\n\nAcompanhe execução no dashboard do Inngest.");
+    } catch (e) {
+      setM2aLog(`Erro: ${(e as Error).message}`);
     } finally {
       setBusy(null);
     }
@@ -147,6 +165,33 @@ function AdminPage() {
           </button>
           {pncpLog && (
             <pre className="mt-3 max-h-72 overflow-auto rounded-md bg-muted p-2 text-[11px]">{pncpLog}</pre>
+          )}
+        </section>
+
+        <section className="rounded-xl border border-border bg-card p-4 shadow-card">
+          <h2 className="font-semibold text-sm">5. Discovery via M2A Tecnologia (finalizadas)</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            Varredura do portal <code>compras.m2atecnologia.com.br</code> filtrando licitações
+            <b> finalizadas</b> (situação=7), extrai o link canônico do PNCP em cada processo
+            e reaproveita a pipeline de extração (itens + resultados homologados). 3 páginas ×
+            ~20 itens por termo, max 60 processos/termo. Termos separados por vírgula.
+          </p>
+          <textarea
+            value={m2aTerms}
+            onChange={(e) => setM2aTerms(e.target.value)}
+            rows={2}
+            className="mt-3 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+            placeholder="caderno, papel A4, caneta esferográfica"
+          />
+          <button
+            onClick={doM2a}
+            disabled={busy !== null}
+            className="mt-2 inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+          >
+            {busy === "m2a" ? "Disparando..." : "Rodar discovery M2A"}
+          </button>
+          {m2aLog && (
+            <pre className="mt-3 max-h-72 overflow-auto rounded-md bg-muted p-2 text-[11px]">{m2aLog}</pre>
           )}
         </section>
       </main>
