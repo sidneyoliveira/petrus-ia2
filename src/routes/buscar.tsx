@@ -392,7 +392,14 @@ function Buscar() {
                 </div>
               )}
             </div>
-            {isFetching && !data && <LiveSearchLog />}
+            {(isFetching || stream.inflight.length > 0) && (
+              <LiveSourceMonitor
+                inflight={stream.inflight}
+                sources={stream.sources}
+                totalSources={stream.totalSources}
+                phase={stream.phase}
+              />
+            )}
             {!isFetching && data?.sources?.length ? (
               <SourceStrip sources={data.sources} />
             ) : null}
