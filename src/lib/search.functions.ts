@@ -690,6 +690,49 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
     // valor unitário mesmo assim (podem ser variantes/sinônimos) e marca
     // como fallback de menor prioridade.
     const useItems = relevant.length > 0 ? relevant : items;
+    // Tenta enriquecer com /resultados (valor HOMOLOGADO real) para itens
+    // que ainda não trazem valorUnitarioHomologado direto na lista /itens.
+    const targetForResultados = {
+      cnpj: String(parent.orgao_cnpj ?? "").replace(/\D/g, ""),
+      ano: String(parent.ano ?? ""),
+      seq: String(parent.numero ?? "").replace(/\D/g, ""),
+    };
+    if (targetForResultados.cnpj.length === 14 && targetForResultados.ano && targetForResultados.seq) {
+      const RES_CONCURRENCY = 6;
+      const needsResultado = useItems.filter(
+        (it) => typeof it.numeroItem === "number" && !validPrice(it.valorUnitarioHomologado),
+      );
+      for (let i = 0; i < needsResultado.length; i += RES_CONCURRENCY) {
+        const chunk = needsResultado.slice(i, i + RES_CONCURRENCY);
+        const settled = await Promise.allSettled(
+          chunk.map((it) =>
+            fetchPncpItemResultado(
+              targetForResultados.cnpj,
+              targetForResultados.ano,
+              targetForResultados.seq,
+              it.numeroItem as number,
+            ).then((res) => ({ it, res })),
+          ),
+        );
+        for (const s of settled) {
+          if (s.status !== "fulfilled" || !s.value.res) continue;
+          const { it, res } = s.value;
+          if (validPrice(res.valorUnitarioHomologado)) {
+            it.valorUnitarioHomologado = res.valorUnitarioHomologado;
+            if (validPrice(res.valorTotalHomologado)) it.valorTotalHomologado = res.valorTotalHomologado;
+            if (typeof res.quantidadeHomologada === "number" && res.quantidadeHomologada > 0)
+              it.quantidade = res.quantidadeHomologada;
+            // Vincula fornecedor vencedor ao item via parent (será propagado abaixo).
+            if (res.nomeRazaoSocialFornecedor && !parent.fornecedor) {
+              parent.fornecedor = res.nomeRazaoSocialFornecedor;
+            }
+            if (res.niFornecedor && !parent.cnpj) {
+              parent.cnpj = res.niFornecedor;
+            }
+          }
+        }
+      }
+    }
     for (const it of useItems) {
       const homologado = validPrice(it.valorUnitarioHomologado);
       const estimado = validPrice(it.valorUnitarioEstimado);
