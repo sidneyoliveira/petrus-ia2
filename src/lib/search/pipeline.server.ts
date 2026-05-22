@@ -968,15 +968,26 @@ export function unifiedToRawItem(u: ComprasGovUnified): RawItem {
 
 // Portal da Transparência — atas/registros de preço (variante PNCP filtrada)
 export async function fetchTransparencia(query: string): Promise<RawItem[]> {
-  const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=ata&ordenacao=-data&pagina=1&pagina_tam=15&status=todos`;
+  // Usuário pediu para se concentrar em EDITAIS encerrados — não buscamos
+  // mais atas. A "Transparência" passa a complementar a busca de editais
+  // com ordenação diferente (relevância) para cobrir resultados que o
+  // fetchPNCP pode ter empurrado para outras páginas.
+  const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=edital&ordenacao=-relevance&pagina=1&pagina_tam=20&status=todos`;
   try {
     const res = await fetch(url, {
       headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
     });
     if (!res.ok) return [];
-    const data = (await res.json()) as { items?: RawItem[]; resultados?: RawItem[] };
-    const items = data.items ?? data.resultados ?? [];
-    return items.map((it) => ({ ...it, _source: "Transparência" }));
+    const data = (await res.json()) as { items?: Array<RawItem & { tem_resultado?: boolean; cancelado?: boolean; data_fim_vigencia?: string }>; resultados?: RawItem[] };
+    const items = (data.items ?? (data.resultados as RawItem[] | undefined) ?? []) as Array<RawItem & { tem_resultado?: boolean; cancelado?: boolean; data_fim_vigencia?: string }>;
+    const now = Date.now();
+    const filtered = items.filter((it) => {
+      if (it.cancelado === true) return false;
+      const dtFim = typeof it.data_fim_vigencia === "string" ? Date.parse(it.data_fim_vigencia) : NaN;
+      const closed = Number.isFinite(dtFim) ? dtFim < now : false;
+      return it.tem_resultado === true || closed;
+    });
+    return filtered.map((it) => ({ ...it, _source: "Transparência", tipo_documento: "edital" } as RawItem));
   } catch (e) {
     console.warn("Transparência fetch error", e);
     return [];
