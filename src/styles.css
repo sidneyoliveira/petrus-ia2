@@ -83,7 +83,7 @@
   --sidebar-accent-foreground: oklch(0.25 0.05 250);
   --sidebar-border: oklch(0.9 0.012 240);
   --sidebar-ring: oklch(0.55 0.1 250);
-  --gradient-hero: linear-gradient(135deg, oklch(0.22 0.06 250) 0%, oklch(0.32 0.09 250) 55%, oklch(0.42 0.1 200) 100%);
+  --gradient-hero: linear-gradient(180deg, var(--background) 0%, var(--muted) 100%);
   --gradient-accent: linear-gradient(135deg, oklch(0.62 0.13 165), oklch(0.55 0.11 200));
   --shadow-elegant: 0 10px 40px -12px color-mix(in oklab, oklch(0.32 0.09 250) 30%, transparent);
   --shadow-card: 0 1px 0 0 oklch(1 0 0 / 0.6) inset, 0 6px 24px -10px color-mix(in oklab, oklch(0.18 0.03 250) 18%, transparent);

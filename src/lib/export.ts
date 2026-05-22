@@ -47,7 +47,7 @@ export function exportCSV(results: PriceResult[], query: string) {
     ].map(esc).join(";"),
   );
   const meta = [
-    `# CotaçãoIA — Pesquisa de Preços`,
+    `# Petrus IA — Pesquisa de Preços`,
     `# Termo;${esc(query)}`,
     `# Gerado em;${esc(new Date().toLocaleString("pt-BR"))}`,
     `# Total de itens;${results.length}`,

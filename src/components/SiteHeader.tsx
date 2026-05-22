@@ -15,7 +15,7 @@ export function SiteHeader() {
             <Scale className="h-4 w-4 text-accent-foreground" />
           </div>
           <div className="leading-tight">
-            <div className="text-sm font-semibold tracking-tight">CotaçãoIA</div>
+            <div className="text-sm font-semibold tracking-tight">Petrus IA</div>
             <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
               Lei 14.133 · Art. 23
             </div>

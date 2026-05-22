@@ -6,10 +6,10 @@ export const Route = createFileRoute("/sobre")({
   component: Sobre,
   head: () => ({
     meta: [
-      { title: "Sobre · CotaçãoIA" },
-      { name: "description", content: "CotaçãoIA é um motor de pesquisa semântica para preços públicos alinhado à Lei nº 14.133/2021 — Art. 23." },
-      { property: "og:title", content: "Sobre · CotaçãoIA" },
-      { property: "og:description", content: "CotaçãoIA é um motor de pesquisa semântica para preços públicos alinhado à Lei nº 14.133/2021 — Art. 23." },
+      { title: "Sobre · Petrus IA" },
+      { name: "description", content: "Petrus IA é um motor de pesquisa semântica para preços públicos alinhado à Lei nº 14.133/2021 — Art. 23." },
+      { property: "og:title", content: "Sobre · Petrus IA" },
+      { property: "og:description", content: "Petrus IA é um motor de pesquisa semântica para preços públicos alinhado à Lei nº 14.133/2021 — Art. 23." },
       { property: "og:url", content: "https://petrus-ia.lovable.app/sobre" },
     ],
     links: [
@@ -29,7 +29,7 @@ function Sobre() {
         </h1>
         <div className="prose prose-sm max-w-none text-foreground/90 space-y-5 leading-relaxed">
           <p>
-            A CotaçãoIA combina busca semântica com filtros jurídicos para
+            A Petrus IA combina busca semântica com filtros jurídicos para
             entregar resultados verdadeiramente comparáveis ao item pesquisado —
             evitando equivalências indevidas (ex.: priorizar "lápis preto" quando
             o pedido é "caneta azul").

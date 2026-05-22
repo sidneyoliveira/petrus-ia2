@@ -17,7 +17,7 @@ export const Route = createFileRoute("/_authenticated/cestas")({
   component: CestasPage,
   head: () => ({
     meta: [
-      { title: "Minhas cestas · CotaçãoIA" },
+      { title: "Minhas cestas · Petrus IA" },
       { name: "robots", content: "noindex,nofollow" },
     ],
   }),
