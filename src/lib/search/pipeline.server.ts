@@ -458,6 +458,7 @@ export async function fetchPortalComprasPublicas(
   query: string,
   maxProcessos = 10,
   budgetMs = 18_000,
+  pages = 3,
 ): Promise<RawItem[]> {
   const term = query.trim();
   if (term.length < 2) return [];
@@ -470,29 +471,43 @@ export async function fetchPortalComprasPublicas(
   // status 3 devolve majoritariamente processos cancelados/encerrados sem
   // valores; sem filtro pegamos publicados/abertos/homologados em ordem
   // decrescente de data, que é o que queremos para cotação.
-  const listUrl =
-    `${BASE}/processos?objeto=${encodeURIComponent(term)}` +
-    `&limitePagina=${maxProcessos}&pagina=1`;
-  let processos: PcpProcesso[] = [];
-  try {
-    const ctl = new AbortController();
-    const to = setTimeout(() => ctl.abort(), 8_000);
-    const res = await fetch(listUrl, {
-      headers: { Accept: "application/json", "User-Agent": "LicitaPro/1.0" },
-      signal: ctl.signal,
-    });
-    clearTimeout(to);
-    if (!res.ok) {
-      console.warn(`[pcp] listing status=${res.status} term="${term}"`);
-      return [];
+  // Pagina `pages` páginas (limite por página = maxProcessos), dedup por
+  // codigoLicitacao.
+  const processos: PcpProcesso[] = [];
+  const seenLic = new Set<string>();
+  for (let p = 1; p <= pages; p++) {
+    if (Date.now() > deadline) break;
+    const listUrl =
+      `${BASE}/processos?objeto=${encodeURIComponent(term)}` +
+      `&limitePagina=${maxProcessos}&pagina=${p}`;
+    try {
+      const ctl = new AbortController();
+      const to = setTimeout(() => ctl.abort(), 8_000);
+      const res = await fetch(listUrl, {
+        headers: { Accept: "application/json", "User-Agent": "LicitaPro/1.0" },
+        signal: ctl.signal,
+      });
+      clearTimeout(to);
+      if (!res.ok) {
+        console.warn(`[pcp] listing status=${res.status} term="${term}" page=${p}`);
+        break;
+      }
+      const json = (await res.json()) as { result?: PcpProcesso[]; data?: PcpProcesso[] } | PcpProcesso[];
+      const pageProc: PcpProcesso[] = Array.isArray(json) ? json : (json.result ?? json.data ?? []);
+      if (!pageProc.length) break;
+      let novos = 0;
+      for (const pr of pageProc) {
+        const k = String(pr.codigoLicitacao ?? "");
+        if (!k || seenLic.has(k)) continue;
+        seenLic.add(k);
+        processos.push(pr);
+        novos++;
+      }
+      if (novos === 0) break; // página repetiu — para de paginar
+    } catch (e) {
+      console.warn(`[pcp] listing err term="${term}" page=${p} err=${(e as Error).message}`);
+      break;
     }
-    const json = (await res.json()) as { result?: PcpProcesso[]; data?: PcpProcesso[] } | PcpProcesso[];
-    processos = Array.isArray(json)
-      ? json
-      : (json.result ?? json.data ?? []);
-  } catch (e) {
-    console.warn(`[pcp] listing err term="${term}" err=${(e as Error).message}`);
-    return [];
   }
   if (!processos.length) return [];
 
