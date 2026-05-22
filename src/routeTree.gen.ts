@@ -17,6 +17,7 @@ import { Route as BuscarRouteImport } from './routes/buscar'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiOcrRouteImport } from './routes/api/ocr'
+import { Route as ApiPublicHooksHarvestTickRouteImport } from './routes/api/public/hooks/harvest-tick'
 
 const SobreRoute = SobreRouteImport.update({
   id: '/sobre',
@@ -58,6 +59,12 @@ const ApiOcrRoute = ApiOcrRouteImport.update({
   path: '/api/ocr',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicHooksHarvestTickRoute =
+  ApiPublicHooksHarvestTickRouteImport.update({
+    id: '/api/public/hooks/harvest-tick',
+    path: '/api/public/hooks/harvest-tick',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -68,6 +75,7 @@ export interface FileRoutesByFullPath {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
   '/api/ocr': typeof ApiOcrRoute
+  '/api/public/hooks/harvest-tick': typeof ApiPublicHooksHarvestTickRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -78,6 +86,7 @@ export interface FileRoutesByTo {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
   '/api/ocr': typeof ApiOcrRoute
+  '/api/public/hooks/harvest-tick': typeof ApiPublicHooksHarvestTickRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -89,6 +98,7 @@ export interface FileRoutesById {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
   '/api/ocr': typeof ApiOcrRoute
+  '/api/public/hooks/harvest-tick': typeof ApiPublicHooksHarvestTickRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -101,6 +111,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/sobre'
     | '/api/ocr'
+    | '/api/public/hooks/harvest-tick'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -111,6 +122,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/sobre'
     | '/api/ocr'
+    | '/api/public/hooks/harvest-tick'
   id:
     | '__root__'
     | '/'
@@ -121,6 +133,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/sobre'
     | '/api/ocr'
+    | '/api/public/hooks/harvest-tick'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -132,6 +145,7 @@ export interface RootRouteChildren {
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   SobreRoute: typeof SobreRoute
   ApiOcrRoute: typeof ApiOcrRoute
+  ApiPublicHooksHarvestTickRoute: typeof ApiPublicHooksHarvestTickRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -192,6 +206,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiOcrRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/hooks/harvest-tick': {
+      id: '/api/public/hooks/harvest-tick'
+      path: '/api/public/hooks/harvest-tick'
+      fullPath: '/api/public/hooks/harvest-tick'
+      preLoaderRoute: typeof ApiPublicHooksHarvestTickRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -204,7 +225,18 @@ const rootRouteChildren: RootRouteChildren = {
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   SobreRoute: SobreRoute,
   ApiOcrRoute: ApiOcrRoute,
+  ApiPublicHooksHarvestTickRoute: ApiPublicHooksHarvestTickRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
