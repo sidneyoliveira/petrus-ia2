@@ -46,7 +46,7 @@ export const searchDbItems = createServerFn({ method: "POST" })
       if (!r || typeof r !== "object" || !r.id) continue;
       if (seen.has(r.id)) continue;
       seen.add(r.id);
-      out.push({ ...r, origem: r.origem || "Banco local" });
+      out.push({ ...r, origem: r.origem || "Banco local", fromLocalDb: true });
       if (out.length >= limit) break;
     }
     return { results: out };
