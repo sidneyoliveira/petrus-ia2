@@ -15,8 +15,10 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as CotacaoRouteImport } from './routes/cotacao'
 import { Route as BuscarRouteImport } from './routes/buscar'
 import { Route as AdminRouteImport } from './routes/admin'
+import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiOcrRouteImport } from './routes/api/ocr'
+import { Route as AuthenticatedCestasRouteImport } from './routes/_authenticated/cestas'
 import { Route as ApiPublicHooksHarvestTickRouteImport } from './routes/api/public/hooks/harvest-tick'
 
 const SobreRoute = SobreRouteImport.update({
@@ -49,6 +51,10 @@ const AdminRoute = AdminRouteImport.update({
   path: '/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedRoute = AuthenticatedRouteImport.update({
+  id: '/_authenticated',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -58,6 +64,11 @@ const ApiOcrRoute = ApiOcrRouteImport.update({
   id: '/api/ocr',
   path: '/api/ocr',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedCestasRoute = AuthenticatedCestasRouteImport.update({
+  id: '/cestas',
+  path: '/cestas',
+  getParentRoute: () => AuthenticatedRoute,
 } as any)
 const ApiPublicHooksHarvestTickRoute =
   ApiPublicHooksHarvestTickRouteImport.update({
@@ -74,6 +85,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
+  '/cestas': typeof AuthenticatedCestasRoute
   '/api/ocr': typeof ApiOcrRoute
   '/api/public/hooks/harvest-tick': typeof ApiPublicHooksHarvestTickRoute
 }
@@ -85,18 +97,21 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
+  '/cestas': typeof AuthenticatedCestasRoute
   '/api/ocr': typeof ApiOcrRoute
   '/api/public/hooks/harvest-tick': typeof ApiPublicHooksHarvestTickRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/_authenticated': typeof AuthenticatedRouteWithChildren
   '/admin': typeof AdminRoute
   '/buscar': typeof BuscarRoute
   '/cotacao': typeof CotacaoRoute
   '/login': typeof LoginRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
+  '/_authenticated/cestas': typeof AuthenticatedCestasRoute
   '/api/ocr': typeof ApiOcrRoute
   '/api/public/hooks/harvest-tick': typeof ApiPublicHooksHarvestTickRoute
 }
@@ -110,6 +125,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/sitemap.xml'
     | '/sobre'
+    | '/cestas'
     | '/api/ocr'
     | '/api/public/hooks/harvest-tick'
   fileRoutesByTo: FileRoutesByTo
@@ -121,23 +137,27 @@ export interface FileRouteTypes {
     | '/login'
     | '/sitemap.xml'
     | '/sobre'
+    | '/cestas'
     | '/api/ocr'
     | '/api/public/hooks/harvest-tick'
   id:
     | '__root__'
     | '/'
+    | '/_authenticated'
     | '/admin'
     | '/buscar'
     | '/cotacao'
     | '/login'
     | '/sitemap.xml'
     | '/sobre'
+    | '/_authenticated/cestas'
     | '/api/ocr'
     | '/api/public/hooks/harvest-tick'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   AdminRoute: typeof AdminRoute
   BuscarRoute: typeof BuscarRoute
   CotacaoRoute: typeof CotacaoRoute
@@ -192,6 +212,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated': {
+      id: '/_authenticated'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AuthenticatedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -206,6 +233,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiOcrRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/cestas': {
+      id: '/_authenticated/cestas'
+      path: '/cestas'
+      fullPath: '/cestas'
+      preLoaderRoute: typeof AuthenticatedCestasRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/api/public/hooks/harvest-tick': {
       id: '/api/public/hooks/harvest-tick'
       path: '/api/public/hooks/harvest-tick'
@@ -216,8 +250,21 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthenticatedRouteChildren {
+  AuthenticatedCestasRoute: typeof AuthenticatedCestasRoute
+}
+
+const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
+  AuthenticatedCestasRoute: AuthenticatedCestasRoute,
+}
+
+const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
+  AuthenticatedRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AuthenticatedRoute: AuthenticatedRouteWithChildren,
   AdminRoute: AdminRoute,
   BuscarRoute: BuscarRoute,
   CotacaoRoute: CotacaoRoute,
@@ -230,3 +277,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
