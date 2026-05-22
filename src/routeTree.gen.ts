@@ -19,6 +19,7 @@ import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiOcrRouteImport } from './routes/api/ocr'
 import { Route as AuthenticatedCestasRouteImport } from './routes/_authenticated/cestas'
+import { Route as ApiPublicInngestRouteImport } from './routes/api/public/inngest'
 import { Route as ApiPublicHooksHarvestTickRouteImport } from './routes/api/public/hooks/harvest-tick'
 
 const SobreRoute = SobreRouteImport.update({
@@ -70,6 +71,11 @@ const AuthenticatedCestasRoute = AuthenticatedCestasRouteImport.update({
   path: '/cestas',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const ApiPublicInngestRoute = ApiPublicInngestRouteImport.update({
+  id: '/api/public/inngest',
+  path: '/api/public/inngest',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicHooksHarvestTickRoute =
   ApiPublicHooksHarvestTickRouteImport.update({
     id: '/api/public/hooks/harvest-tick',
@@ -87,6 +93,7 @@ export interface FileRoutesByFullPath {
   '/sobre': typeof SobreRoute
   '/cestas': typeof AuthenticatedCestasRoute
   '/api/ocr': typeof ApiOcrRoute
+  '/api/public/inngest': typeof ApiPublicInngestRoute
   '/api/public/hooks/harvest-tick': typeof ApiPublicHooksHarvestTickRoute
 }
 export interface FileRoutesByTo {
@@ -99,6 +106,7 @@ export interface FileRoutesByTo {
   '/sobre': typeof SobreRoute
   '/cestas': typeof AuthenticatedCestasRoute
   '/api/ocr': typeof ApiOcrRoute
+  '/api/public/inngest': typeof ApiPublicInngestRoute
   '/api/public/hooks/harvest-tick': typeof ApiPublicHooksHarvestTickRoute
 }
 export interface FileRoutesById {
@@ -113,6 +121,7 @@ export interface FileRoutesById {
   '/sobre': typeof SobreRoute
   '/_authenticated/cestas': typeof AuthenticatedCestasRoute
   '/api/ocr': typeof ApiOcrRoute
+  '/api/public/inngest': typeof ApiPublicInngestRoute
   '/api/public/hooks/harvest-tick': typeof ApiPublicHooksHarvestTickRoute
 }
 export interface FileRouteTypes {
@@ -127,6 +136,7 @@ export interface FileRouteTypes {
     | '/sobre'
     | '/cestas'
     | '/api/ocr'
+    | '/api/public/inngest'
     | '/api/public/hooks/harvest-tick'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -139,6 +149,7 @@ export interface FileRouteTypes {
     | '/sobre'
     | '/cestas'
     | '/api/ocr'
+    | '/api/public/inngest'
     | '/api/public/hooks/harvest-tick'
   id:
     | '__root__'
@@ -152,6 +163,7 @@ export interface FileRouteTypes {
     | '/sobre'
     | '/_authenticated/cestas'
     | '/api/ocr'
+    | '/api/public/inngest'
     | '/api/public/hooks/harvest-tick'
   fileRoutesById: FileRoutesById
 }
@@ -165,6 +177,7 @@ export interface RootRouteChildren {
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   SobreRoute: typeof SobreRoute
   ApiOcrRoute: typeof ApiOcrRoute
+  ApiPublicInngestRoute: typeof ApiPublicInngestRoute
   ApiPublicHooksHarvestTickRoute: typeof ApiPublicHooksHarvestTickRoute
 }
 
@@ -240,6 +253,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCestasRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/api/public/inngest': {
+      id: '/api/public/inngest'
+      path: '/api/public/inngest'
+      fullPath: '/api/public/inngest'
+      preLoaderRoute: typeof ApiPublicInngestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/hooks/harvest-tick': {
       id: '/api/public/hooks/harvest-tick'
       path: '/api/public/hooks/harvest-tick'
@@ -272,8 +292,19 @@ const rootRouteChildren: RootRouteChildren = {
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   SobreRoute: SobreRoute,
   ApiOcrRoute: ApiOcrRoute,
+  ApiPublicInngestRoute: ApiPublicInngestRoute,
   ApiPublicHooksHarvestTickRoute: ApiPublicHooksHarvestTickRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
