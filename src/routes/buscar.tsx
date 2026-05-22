@@ -10,6 +10,7 @@ import { ResultCard } from "@/components/ResultCard";
 import { ResultsTable } from "@/components/ResultsTable";
 import { ResultModal } from "@/components/ResultModal";
 import { searchPrices } from "@/lib/search.functions";
+import { searchDbItems } from "@/lib/db-search.functions";
 import { exportCSV, exportJSON, exportTXT } from "@/lib/export";
 import { useBasket } from "@/lib/basket";
 import type { PriceResult } from "@/lib/types";
@@ -77,6 +78,7 @@ function Buscar() {
   const [page, setPage] = useState(1);
 
   const callSearch = useServerFn(searchPrices);
+  const callDbSearch = useServerFn(searchDbItems);
   const queryClient = useQueryClient();
 
   // Debounce input -> URL q
@@ -112,6 +114,15 @@ function Buscar() {
           keywords: parsedKeywords.length ? parsedKeywords : undefined,
         },
       }),
+  });
+
+  // DB-first: busca instantânea no banco local (zero créditos) em paralelo
+  // com a busca remota. Resultados aparecem no topo enquanto a remota carrega.
+  const { data: dbData } = useQuery({
+    queryKey: ["search-db", q],
+    enabled: q.trim().length >= 2,
+    staleTime: 5 * 60_000,
+    queryFn: () => callDbSearch({ data: { query: q.trim(), limit: 30 } }),
   });
 
   // Refresh em background quando o resultado vem do cache.
@@ -150,10 +161,21 @@ function Buscar() {
   }, [isCached, q, mode, parsedKeywords.join("|")]);
 
   const filtered = useMemo(() => {
-    if (!data?.results) return [];
+    // Merge: resultados do banco local + remotos, dedupe por id, banco vai
+    // primeiro (já casa por query_norm/ILIKE) e remoto preenche o resto.
+    const remote = data?.results ?? [];
+    const local = dbData?.results ?? [];
+    const seen = new Set<string>();
+    const merged: PriceResult[] = [];
+    for (const r of [...local, ...remote]) {
+      if (!r?.id || seen.has(r.id)) continue;
+      seen.add(r.id);
+      merged.push(r);
+    }
+    if (merged.length === 0) return [];
     const vMin = filters.valorMin ? Number(filters.valorMin.replace(",", ".")) : null;
     const vMax = filters.valorMax ? Number(filters.valorMax.replace(",", ".")) : null;
-    let arr = data.results.filter((r) => {
+    let arr = merged.filter((r) => {
       if (filters.uf && (r.uf ?? "").toUpperCase() !== filters.uf) return false;
       if (filters.unidade && !(r.unidade ?? "").toLowerCase().includes(filters.unidade.toLowerCase())) return false;
       if (vMin !== null && !Number.isNaN(vMin) && (r.valor ?? -Infinity) < vMin) return false;
@@ -165,8 +187,8 @@ function Buscar() {
     // Fallback: se os filtros zeraram a lista mas há resultados brutos,
     // mostra todos eles (ordenados por score). O usuário nunca deve ficar
     // com a tela vazia quando o servidor retornou algo.
-    if (arr.length === 0 && data.results.length > 0) {
-      arr = [...data.results];
+    if (arr.length === 0 && merged.length > 0) {
+      arr = [...merged];
     }
 
     // Ordenação configurável
@@ -227,7 +249,7 @@ function Buscar() {
       }
     });
     return arr;
-  }, [data, filters, sortBy, q]);
+  }, [data, dbData, filters, sortBy, q]);
 
   // Estatísticas — apenas valores UNITÁRIOS confiáveis, com remoção de outliers (IQR)
   const stats = useMemo(() => {
