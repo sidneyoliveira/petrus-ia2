@@ -1,94 +1,67 @@
-## Motor de Indexação PNCP/Compras-gov com Inngest + FTS
+## Objetivo
 
-### Pré-requisito (bloqueante)
-**Conectar Inngest** em Connectors antes de eu começar. Sem isso, a fila não roda. Depois de conectar, eu sigo o plano abaixo sem novas perguntas.
+Hoje `searchPrices` aguarda **todas** as fontes terminarem antes de devolver qualquer item (5min para 1000 itens = tela em branco). Vamos transformar a busca em um stream: cada fonte que termina **empurra** seus itens para o navegador, que vai re-rankeando e mostrando em tempo real. O resultado final (com cache e telemetria) continua igual ao de hoje.
 
----
-
-### Arquitetura alvo
+## Arquitetura
 
 ```text
-┌─ Inngest Cron (hourly) ────────────┐
-│   discover.window  (1 dia/exec)    │  → enfileira N eventos
-└────────────────┬───────────────────┘
-                 ▼
-┌─ extract.compra (paralelo, conc=4) ┐
-│   pagina /v1/.../itens             │  → enfileira 1 evento por item
-└────────────────┬───────────────────┘
-                 ▼
-┌─ resolve.item (paralelo, conc=8) ──┐
-│   GET /itens/{n}/resultados        │
-│   normaliza → upsert quote_items   │
-│   marca homologado + fornecedor    │
-└────────────────────────────────────┘
+Navegador (/buscar)
+   │  POST /api/public/search/stream  (body = filtros)
+   ▼
+TSS server route (SSE: text/event-stream)
+   │
+   ├─ dispara cada tarefa do pipeline em paralelo
+   │     (PNCP × 3 páginas, M2A, Portal CP, Firecrawl, mining, etc.)
+   │
+   ├─ a cada Promise que resolve:
+   │     1) anexa os RawItem ao buffer global
+   │     2) roda enrich+rank+dedup INCREMENTAL no buffer
+   │     3) emite `event: snapshot` com top-N resultados atuais
+   │     4) emite `event: source` com {name, status, count}
+   │
+   └─ quando todas resolvem:
+         - persiste cache (igual hoje)
+         - emite `event: done` com payload final + tookMs + sources
+         - fecha o stream
 ```
 
-Cada step é durável: erro de uma compra não derruba a janela; Inngest retenta sozinho com backoff.
+## Mudanças por arquivo
 
-### Camadas
+**1. `src/lib/search/pipeline.server.ts`** (refactor mínimo)
+- Expor um helper novo `rankPartial(raw, data, apiKey, catalog)` que recebe o array bruto acumulado e devolve `PriceResult[]` rankeado — basicamente o que hoje vive em `searchPrices` entre as linhas 213–366, extraído para uma função pura. Sem mudar comportamento.
+- Expor `buildTaskList(data, catalog, apiKey)` que devolve `Array<{ name: string; run: () => Promise<RawItem[]> }>` — a mesma lista de `tasks` que hoje vive inline, agora nomeada por fonte.
 
-**1. Discovery por data (não por keyword)**
-- Novo `src/lib/crawler/pncp-discovery.server.ts`: pagina `GET /v1/contratacoes/publicacao?dataInicial=&dataFinal=&codigoModalidadeContratacao=...` cobrindo modalidades relevantes (pregão eletrônico, dispensa, concorrência).
-- Novo `src/lib/crawler/compras-gov-discovery.server.ts`: reusa `compras-gov.server.ts` já existente, mas agora chamado pelo worker por janela de data, não por keyword.
+**2. `src/routes/api/public/search/stream.ts`** (novo)
+- TSS server route POST que aceita o `FilterSchema`.
+- Lê cache primeiro: se HIT e não-`forceRefresh`, manda um único `event: done` com o cache e fecha (mantém latência zero da UX cacheada).
+- Caso contrário, abre `ReadableStream`, chama `buildTaskList`, escuta cada `task.run()` com `Promise.allSettled` mas via loop assíncrono — para cada resolução: acumula raw, chama `rankPartial`, emite `snapshot` + `source`. No final emite `done` e grava cache.
+- Auth: opcional — a rota fica em `/api/public/*` para não exigir bearer; validação Zod no body. (mesmo nível de exposição do serverFn atual, que também é callable sem login).
 
-**2. Extraction + Adjudication**
-- `src/lib/crawler/pncp-extract.server.ts`: dado `(cnpj, ano, seq)`, busca itens (reusa `fetchPncpItens` que já respeita `totalPaginas`) e para cada item enfileira `resolve.item`.
-- `src/lib/crawler/pncp-resolve.server.ts`: chama `/itens/{n}/resultados` (reusa `fetchPncpItemResultado`), normaliza para o Golden Schema e faz upsert em `quote_items` com `discovered_via='crawler'`, `homologado=true` quando há `valorUnitarioHomologado`.
+**3. `src/lib/search-stream.ts`** (novo, client-only)
+- Hook `useSearchStream(filters, enabled)` que retorna `{ items, sources, done, error, tookMs }`.
+- Internamente: `fetch('/api/public/search/stream', { method: 'POST', body: JSON.stringify(filters) })`, lê o `response.body` com `getReader()`, parseia eventos SSE, atualiza estado React via `useState` + `useReducer`.
+- Aborta com `AbortController` quando filtros mudam ou o componente desmonta.
 
-**3. Inngest functions**
-- `src/lib/inngest/client.ts`: client + helper `sendEvent` via gateway Lovable.
-- `src/lib/inngest/functions.ts`: define `discoverWindow`, `extractCompra`, `resolveItem` com concorrência, retry, dead-letter.
-- `src/routes/api/public/inngest.ts`: serve endpoint (`POST/GET/PUT`) usando `inngest/edge` — Inngest precisa desse URL para sync e invocação.
-- Cron Inngest: `discover.window` roda a cada 1h, processando dataInicial/dataFinal de 1 dia (janela deslizante). Backfill inicial de 180 dias: 1 evento manual disparando 180 janelas (Inngest paraleliza com conc=2 para não estourar PNCP).
+**4. `src/routes/buscar.tsx`** (substituição cirúrgica)
+- Remove o `useQuery({ queryFn: () => callSearch(...) })` da busca principal.
+- Mantém `searchDbItems` (DB-first) intocado.
+- Plugin `useSearchStream` no lugar; `data.results` agora vem do estado do hook.
+- `isFetching` vira `!done && items.length === 0`; passamos a mostrar um indicador "buscando em N fontes · X itens encontrados…" no topo enquanto `!done`.
 
-**4. Full-Text Search (PostgreSQL TSVector)**
-- Migration:
-  - Adiciona coluna `tsv tsvector` em `quote_items`.
-  - Trigger `BEFORE INSERT/UPDATE` que computa `to_tsvector('portuguese', unaccent(coalesce(titulo,'') || ' ' || coalesce(descricao,'') || ' ' || coalesce(objeto_estruturado,'')))`.
-  - Índice GIN em `tsv`.
-  - Extensão `unaccent` (se não estiver).
-  - Backfill da coluna para linhas existentes.
-- Nova função SQL `search_quote_items_fts(query text, limit int)` que retorna ordenado por `ts_rank_cd`.
-- Refator `searchDbItems` (`src/lib/db-search.functions.ts`): usa `.rpc('search_quote_items_fts', ...)` em vez de `ILIKE`.
+**5. `src/lib/search.functions.ts`** (mantido)
+- O serverFn `searchPrices` continua existindo para compatibilidade (export PDF, rota `/cotacao`, refresh em background do cache). Internamente passa a usar os helpers extraídos em #1, sem mudança de contrato.
 
-**5. Wire no /buscar (DB-first)**
-- Em `src/routes/buscar.tsx`: dispara `searchDbItems` em paralelo com a busca remota; mostra resultados do banco no topo imediatamente com badge "do banco" e mergeia quando a remota termina (dedupe por `fingerprint`).
+## Detalhes técnicos
 
-**6. Admin: trigger backfill manual**
-- Novo endpoint `/api/public/hooks/crawler-backfill` (com header `apikey` anon) que dispara o evento Inngest `backfill.start` com `days: 180`. UI no `/admin` com botão "Rodar backfill 180 dias".
+- **Cloudflare Workers + SSE**: `ReadableStream` é nativo e suportado. Headers obrigatórios: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`. Não usar compressão.
+- **Backpressure**: emitir snapshot só a cada 500ms (debounce) ou quando uma fonte nova chega — evita inundar a UI quando várias fontes resolvem juntas.
+- **Re-ranking incremental**: `rankPartial` é O(n log n) no tamanho atual do buffer (~poucos milhares no pior caso). Roda a cada source completion (~10-15 vezes por busca). Custo desprezível.
+- **Cache**: gravado apenas no `done`, igual hoje. Snapshots intermediários **não** vão para o cache.
+- **Erros por fonte**: continuam silenciados (igual hoje); o painel de telemetria mostra falha.
+- **Erro fatal do stream**: emite `event: error` e fecha. Frontend mostra toast.
 
-### Arquivos
+## Fora do escopo
 
-**Criar (8):**
-- `src/lib/inngest/client.ts`
-- `src/lib/inngest/functions.ts`
-- `src/lib/crawler/pncp-discovery.server.ts`
-- `src/lib/crawler/pncp-extract.server.ts`
-- `src/lib/crawler/pncp-resolve.server.ts`
-- `src/lib/crawler/golden-schema.ts` (normalizer + upsert helper)
-- `src/routes/api/public/inngest.ts`
-- `src/routes/api/public/hooks/crawler-backfill.ts`
-
-**Editar (3):**
-- `src/lib/db-search.functions.ts` → usar `rpc` FTS
-- `src/routes/buscar.tsx` → wire DB-first com merge
-- `src/routes/admin.tsx` → botão backfill + tabela `harvest_runs` mostrando jobs Inngest
-
-**Migration (1):**
-- `unaccent` extension + `tsv` column + trigger + GIN index + backfill + `search_quote_items_fts` RPC
-
-### O que NÃO mudo
-- O `harvestTick` antigo (cron pg) continua funcionando para os termos manuais que o admin cadastrou — não removo, só deixo de ser o motor principal.
-- `fetchPncpItens` / `fetchPncpItemResultado` / `pncpFetchJson` continuam — só passam a ser chamados pelos workers Inngest.
-- A busca remota live (`searchPrices`) continua existindo para quando o termo for muito novo e ainda não estiver no índice.
-
-### Riscos / cuidados
-- **PNCP rate limit**: backfill de 180 dias = ~180 × N modalidades × M páginas. Vou começar conc=2 e watch `429`. Se travar, reduzo para 1 e aumento backoff.
-- **Custo Inngest**: tier free aguenta esse volume tranquilo (eventos são baratos; runs custam só onde há código).
-- **Volume `quote_items`**: 180 dias pode trazer 100k-500k linhas. RLS pública de leitura continua OK; GIN index segura.
-
-### Próximo passo
-1. Você conecta Inngest em Connectors.
-2. Eu rodo a migration FTS (separada, primeiro), depois crio os arquivos do crawler + Inngest, depois wire DB-first no /buscar, depois botão de backfill no admin.
-
-Confirma que conectou Inngest pra eu começar?
+- Manter `searchPrices` como serverFn (não vamos quebrar `/cotacao` nem o refresh em background).
+- Nada muda nas fontes/pipelines individuais — só na orquestração.
+- Sem mudanças visuais além do indicador de progresso "X fontes · Y itens".
