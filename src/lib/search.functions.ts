@@ -30,8 +30,8 @@ const {
   filtersHash,
   readCachedSearch,
   writeCachedSearch,
-  } = Cache;,
-  const {,
+} = Cache;
+const {
   PNCP_UA,
   pncpFetchJson,
   FORBIDDEN,
