@@ -780,19 +780,56 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
 // Compras.gov.br — endpoint público de contratos (Dados Abertos)
 // Faz busca alternativa por palavra-chave em contratos, com fallback silencioso.
 async function fetchComprasGov(query: string): Promise<RawItem[]> {
-  const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=contrato&ordenacao=-data&pagina=1&pagina_tam=15&status=todos`;
+  // API oficial de Dados Abertos do Compras.gov.br v2.0
+  // Cobre Trilha 3 (ARP) + Trilha 1 (Nova Lei 14.133); pregões legados ficam
+  // de fora por padrão (volume alto e dado redundante com o que já vem do PNCP).
   try {
-    const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+    const unified = await searchComprasGovByKeyword(query, {
+      dias: 120,
+      incluirPregoes: false,
+      maxResultados: 80,
     });
-    if (!res.ok) return [];
-    const data = (await res.json()) as { items?: RawItem[]; resultados?: RawItem[] };
-    const items = data.items ?? data.resultados ?? [];
-    return items.map((it) => ({ ...it, _source: "Compras.gov.br" }));
+    return unified.map((u): RawItem => unifiedToRawItem(u));
   } catch (e) {
-    console.warn("Compras.gov.br fetch error", e);
+    console.warn("Compras.gov.br (dadosabertos) fetch error", e);
     return [];
   }
+}
+
+/** Converte o formato unificado do compras.gov para o RawItem do pipeline. */
+function unifiedToRawItem(u: ComprasGovUnified): RawItem {
+  const sourceLabel =
+    u.origem_lei === "arp"
+      ? "Compras.gov ARP"
+      : u.origem_lei === "14133"
+        ? "Compras.gov 14.133"
+        : "Compras.gov Pregão";
+  // Tipo de documento usado pelo toResult/buildPncpUrl
+  const tipo_documento = u.origem_lei === "arp" ? "ata" : "contrato";
+  return {
+    id: u.id_externo ?? `cg-${u.origem_lei}-${Math.random().toString(36).slice(2, 10)}`,
+    numero: u.numero_processo_ou_ata,
+    title: u.descricao_item,
+    description: u.descricao_detalhada ?? u.descricao_item,
+    descricao: u.descricao_detalhada ?? u.descricao_item,
+    objeto_compra: u.descricao_item,
+    unidade_medida: u.unidade,
+    quantidade: u.quantidade,
+    valor_unitario_homologado: u.valor_unitario,
+    valor_total_item: u.valor_total,
+    fornecedor: u.fornecedor_nome,
+    orgao_nome: u.orgao_gerenciador,
+    orgao_cnpj: u.cnpj_orgao ?? u.fornecedor_cnpj,
+    uf: u.uf,
+    municipio_nome: u.municipio,
+    data: u.data,
+    data_publicacao_pncp: u.data,
+    situacao_nome: "Homologado",
+    tipo_documento,
+    _valorTipo: "unitario_homologado",
+    _sourceName: sourceLabel,
+    _sourceDomain: "dadosabertos.compras.gov.br",
+  };
 }
 
 // Portal da Transparência — atas/registros de preço (variante PNCP filtrada)
