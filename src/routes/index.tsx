@@ -54,11 +54,12 @@ function Home() {
         <section className="relative overflow-hidden border-b border-border/60">
           <div className="absolute inset-0 bg-hero" />
           <div className="relative mx-auto max-w-5xl px-4 sm:px-6 pt-20 pb-20 text-center">
-            <h1 className="text-4xl sm:text-6xl font-bold text-foreground leading-[1.05] text-balance">
-              Petrus IA
+            <h1 className="text-4xl sm:text-5xl font-bold text-foreground leading-[1.1] text-balance">
+              Pesquisa inteligente de preços para licitações públicas
             </h1>
-            <p className="mx-auto mt-4 max-w-xl text-base sm:text-lg text-muted-foreground">
-              Pesquisa de preços públicos conforme o Art. 23 da Lei 14.133/2021.
+            <p className="mx-auto mt-4 max-w-2xl text-base sm:text-lg text-muted-foreground">
+              Encontre, valide e organize cotações em minutos — sem planilhas, sem
+              fontes informais, sem retrabalho.
             </p>
 
             <form onSubmit={submit} className="mx-auto mt-8 max-w-2xl">
