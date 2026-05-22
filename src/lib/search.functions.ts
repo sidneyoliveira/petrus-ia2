@@ -1989,6 +1989,15 @@ export const searchPrices = createServerFn({ method: "POST" })
       // Cotação com fornecedores reais (catálogos / fabricantes / distribuidores)
       tasks.push(fetchFirecrawlSuppliers(v));
     }
+    // Cobertura garantida dos portais NOMEADOS na UI (TCU, Comprasnet,
+    // Painel de Preços, BPS Saúde, CMED Anvisa, TCE-CE) — uma chamada
+    // Firecrawl POR domínio para evitar o viés do operador OR do Google.
+    // Só na query principal para não estourar créditos.
+    const namedDomains = catalog
+      .filter((s) => !/^pncp\.gov\.br$|^compras\.gov\.br$/.test(s.domain))
+      .slice(0, 6)
+      .map((s) => s.domain);
+    tasks.push(fetchFirecrawlPerDomain(data.query, namedDomains, catalog));
     // Mineração de anexos (PDFs/HTML de Atas e Termos de Homologação)
     // Roda só na variante principal para limitar custo do Firecrawl.
     tasks.push(mineAttachments(data.query));
