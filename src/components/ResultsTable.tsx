@@ -15,6 +15,7 @@ import {
   Highlighter,
   Bookmark,
   Wrench,
+  Database,
 } from "lucide-react";
 import type { PriceResult } from "@/lib/types";
 import { buildHighlightUrl } from "@/lib/highlight-source";
@@ -116,6 +117,11 @@ export function ResultsTable({
                         <Badge variant="outline" className="text-[9px] uppercase font-medium">
                           {item.origem}
                         </Badge>
+                        {item.fromLocalDb && (
+                          <Badge variant="secondary" className="text-[9px] uppercase gap-1" title="Resultado recuperado do banco de dados do sistema">
+                            <Database className="h-3 w-3" /> Banco
+                          </Badge>
+                        )}
                         {item.documento && item.documento !== "outro" && (
                           <Badge variant="secondary" className="text-[9px] uppercase">
                             {item.documento}
