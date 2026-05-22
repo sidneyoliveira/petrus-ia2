@@ -364,25 +364,24 @@ export async function fetchM2A(
   searchTerm: string,
   cap = 15,
   budgetMs = 18_000,
-  pages = 3,
+  pages = 1,
+  pageStart = 1,
 ): Promise<RawItem[]> {
   const term = searchTerm.trim();
   if (term.length < 2) return [];
   const deadline = Date.now() + budgetMs;
-  // Pagina N páginas da listagem. Cada página tem ~20 processos; deduplicamos
-  // por id (slug) caso o portal repita.
   const collected: { id: string; slug: string; url: string }[] = [];
   const seenIds = new Set<string>();
-  for (let p = 1; p <= pages; p++) {
+  for (let p = pageStart; p < pageStart + pages; p++) {
     if (Date.now() > deadline) break;
     let pageHits: { id: string; slug: string; url: string }[] = [];
     try {
       pageHits = await fetchM2aListing({ search: term, situacao: 7, page: p });
+      console.info(`[m2a] term="${term}" p${p} processos=${pageHits.length}`);
     } catch (e) {
-      console.warn(`[m2a] listing err term="${term}" page=${p} err=${(e as Error).message}`);
-      break;
+      console.warn(`[m2a] listing err term="${term}" p${p} err=${(e as Error).message}`);
+      continue;
     }
-    if (pageHits.length === 0) break;
     for (const h of pageHits) {
       if (seenIds.has(h.id)) continue;
       seenIds.add(h.id);
@@ -405,7 +404,8 @@ export async function fetchM2A(
     settled.forEach((s, idx) => {
       if (s.status !== "fulfilled" || !s.value) return;
       const ref = s.value;
-      const objeto = capped[idx].slug.replace(/-/g, " ").slice(0, 200);
+      const proc = chunk[idx];
+      const objeto = proc.slug.replace(/-/g, " ").slice(0, 200);
       out.push({
         id: `m2a-${ref.cnpj}-${ref.ano}-${ref.sequencial}`,
         numero: ref.sequencial,
@@ -422,6 +422,7 @@ export async function fetchM2A(
       });
     });
   }
+  console.info(`[m2a] term="${term}" refsPNCP=${out.length}/${capped.length}`);
   return out;
 }
 
