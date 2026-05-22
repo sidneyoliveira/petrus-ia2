@@ -1,50 +1,94 @@
-# Plano: fechar as 5 frentes pendentes
+## Motor de Indexação PNCP/Compras-gov com Inngest + FTS
 
-Vou dividir em **2 levas** para controlar consumo de créditos (Firecrawl + Lovable AI são os mais caros).
-
----
-
-## Leva 1 — barata, alto impacto (agora)
-
-### 1. DB-first no `/buscar` (zero créditos externos)
-- Em `buscar.tsx`, antes do `useQuery` da busca remota, disparar `searchDbItems({ query })` em paralelo.
-- Mostrar resultados do banco imediatamente no topo com badge **"do banco"**. Quando a busca remota termina, mesclar (dedupe por `id`/`fingerprint`), mantendo os do banco que casam exato no topo.
-- Custo: 0 créditos externos. Resposta percebida muito mais rápida.
-
-### 2. Persistir itens-irmãos da contratação
-- Em `search.functions.ts` (PNCP e Compras.gov), quando a API já retorna a lista de itens da contratação no mesmo payload, fazer `upsert` em `quote_items` de TODOS os itens (não só os que casaram), com `discovered_via='sibling'` e `query_norm` derivado do título de cada irmão.
-- Sem chamadas extras a APIs externas — reaproveita o payload que já veio. Custo: 0 créditos.
-- Onde os endpoints PNCP/Transparência **não** trazem irmãos no mesmo response, deixar um TODO e seguir.
-
-### 3. UI compacta + cesta na nuvem + rota `/cestas`
-- Recriar `src/routes/_authenticated.tsx` (layout gate) e `src/routes/_authenticated/cestas.tsx` usando `baskets.functions.ts` (já existe).
-- Em `/cotacao`: botões **"Salvar na nuvem"** / **"Carregar da nuvem"** que chamam `saveBasket`/`loadBasket`+`replaceBasketItems`.
-- Esconder colunas matemáticas redundantes no `ResultsTable` (`mathStatus`, `extractionQuality`, `valorTotalCalculado`, `delta`).
+### Pré-requisito (bloqueante)
+**Conectar Inngest** em Connectors antes de eu começar. Sem isso, a fila não roda. Depois de conectar, eu sigo o plano abaixo sem novas perguntas.
 
 ---
 
-## Leva 2 — cara, fazer depois (sob confirmação)
+### Arquitetura alvo
 
-### 4. Stream NDJSON real
-- Refator de `search.functions.ts` → `search-core.server.ts` com callback `onProgress(stage, source, count)`.
-- Nova rota `src/routes/api/search-stream.ts` que faz `ReadableStream` em NDJSON.
-- Hook `useStreamingSearch` no cliente substitui o log simulado por eventos reais (`source.start`, `source.done`, `merge`, `done`).
-- Custo: 0 créditos diretos, mas refator grande e arriscado (regressão na busca atual).
+```text
+┌─ Inngest Cron (hourly) ────────────┐
+│   discover.window  (1 dia/exec)    │  → enfileira N eventos
+└────────────────┬───────────────────┘
+                 ▼
+┌─ extract.compra (paralelo, conc=4) ┐
+│   pagina /v1/.../itens             │  → enfileira 1 evento por item
+└────────────────┬───────────────────┘
+                 ▼
+┌─ resolve.item (paralelo, conc=8) ──┐
+│   GET /itens/{n}/resultados        │
+│   normaliza → upsert quote_items   │
+│   marca homologado + fornecedor    │
+└────────────────────────────────────┘
+```
 
-### 5. Resolver de valor contratado
-- `contract-resolver.server.ts`: para itens PNCP com `homologado=true` e sem `valor_contratado`, chamar Firecrawl no `url` da ata + `google/gemini-2.5-flash-lite` (modelo mais barato) com schema JSON pequeno (`{ valor_homologado, fornecedor }`).
-- Rodar **on-demand** (botão "buscar valor contratado") em vez de automático, pra controlar custo.
-- Persistir em `valor_contratado`, `valor_contratado_fonte`, `contract_fetch_status`.
+Cada step é durável: erro de uma compra não derruba a janela; Inngest retenta sozinho com backoff.
 
----
+### Camadas
 
-## Ordem de execução agora (Leva 1)
-1. Wire `searchDbItems` no `/buscar` com merge no topo
-2. Persistir irmãos no `search.functions.ts` (PNCP + Compras.gov adapters)
-3. Rotas auth (`_authenticated.tsx`, `_authenticated/cestas.tsx`)
-4. Botões salvar/carregar nuvem no `/cotacao`
-5. Esconder colunas redundantes do `ResultsTable`
+**1. Discovery por data (não por keyword)**
+- Novo `src/lib/crawler/pncp-discovery.server.ts`: pagina `GET /v1/contratacoes/publicacao?dataInicial=&dataFinal=&codigoModalidadeContratacao=...` cobrindo modalidades relevantes (pregão eletrônico, dispensa, concorrência).
+- Novo `src/lib/crawler/compras-gov-discovery.server.ts`: reusa `compras-gov.server.ts` já existente, mas agora chamado pelo worker por janela de data, não por keyword.
 
-Total estimado: ~6-8 arquivos editados, 2 criados, 0 migrations, **zero créditos de Firecrawl/Lovable AI**.
+**2. Extraction + Adjudication**
+- `src/lib/crawler/pncp-extract.server.ts`: dado `(cnpj, ano, seq)`, busca itens (reusa `fetchPncpItens` que já respeita `totalPaginas`) e para cada item enfileira `resolve.item`.
+- `src/lib/crawler/pncp-resolve.server.ts`: chama `/itens/{n}/resultados` (reusa `fetchPncpItemResultado`), normaliza para o Golden Schema e faz upsert em `quote_items` com `discovered_via='crawler'`, `homologado=true` quando há `valorUnitarioHomologado`.
 
-Pergunto: **toco a Leva 1 inteira agora e deixo Leva 2 (stream + contract resolver) pra próxima rodada**, certo? Ou prefere que eu também já faça o stream real (item 4) que não custa créditos mas é refator grande?
+**3. Inngest functions**
+- `src/lib/inngest/client.ts`: client + helper `sendEvent` via gateway Lovable.
+- `src/lib/inngest/functions.ts`: define `discoverWindow`, `extractCompra`, `resolveItem` com concorrência, retry, dead-letter.
+- `src/routes/api/public/inngest.ts`: serve endpoint (`POST/GET/PUT`) usando `inngest/edge` — Inngest precisa desse URL para sync e invocação.
+- Cron Inngest: `discover.window` roda a cada 1h, processando dataInicial/dataFinal de 1 dia (janela deslizante). Backfill inicial de 180 dias: 1 evento manual disparando 180 janelas (Inngest paraleliza com conc=2 para não estourar PNCP).
+
+**4. Full-Text Search (PostgreSQL TSVector)**
+- Migration:
+  - Adiciona coluna `tsv tsvector` em `quote_items`.
+  - Trigger `BEFORE INSERT/UPDATE` que computa `to_tsvector('portuguese', unaccent(coalesce(titulo,'') || ' ' || coalesce(descricao,'') || ' ' || coalesce(objeto_estruturado,'')))`.
+  - Índice GIN em `tsv`.
+  - Extensão `unaccent` (se não estiver).
+  - Backfill da coluna para linhas existentes.
+- Nova função SQL `search_quote_items_fts(query text, limit int)` que retorna ordenado por `ts_rank_cd`.
+- Refator `searchDbItems` (`src/lib/db-search.functions.ts`): usa `.rpc('search_quote_items_fts', ...)` em vez de `ILIKE`.
+
+**5. Wire no /buscar (DB-first)**
+- Em `src/routes/buscar.tsx`: dispara `searchDbItems` em paralelo com a busca remota; mostra resultados do banco no topo imediatamente com badge "do banco" e mergeia quando a remota termina (dedupe por `fingerprint`).
+
+**6. Admin: trigger backfill manual**
+- Novo endpoint `/api/public/hooks/crawler-backfill` (com header `apikey` anon) que dispara o evento Inngest `backfill.start` com `days: 180`. UI no `/admin` com botão "Rodar backfill 180 dias".
+
+### Arquivos
+
+**Criar (8):**
+- `src/lib/inngest/client.ts`
+- `src/lib/inngest/functions.ts`
+- `src/lib/crawler/pncp-discovery.server.ts`
+- `src/lib/crawler/pncp-extract.server.ts`
+- `src/lib/crawler/pncp-resolve.server.ts`
+- `src/lib/crawler/golden-schema.ts` (normalizer + upsert helper)
+- `src/routes/api/public/inngest.ts`
+- `src/routes/api/public/hooks/crawler-backfill.ts`
+
+**Editar (3):**
+- `src/lib/db-search.functions.ts` → usar `rpc` FTS
+- `src/routes/buscar.tsx` → wire DB-first com merge
+- `src/routes/admin.tsx` → botão backfill + tabela `harvest_runs` mostrando jobs Inngest
+
+**Migration (1):**
+- `unaccent` extension + `tsv` column + trigger + GIN index + backfill + `search_quote_items_fts` RPC
+
+### O que NÃO mudo
+- O `harvestTick` antigo (cron pg) continua funcionando para os termos manuais que o admin cadastrou — não removo, só deixo de ser o motor principal.
+- `fetchPncpItens` / `fetchPncpItemResultado` / `pncpFetchJson` continuam — só passam a ser chamados pelos workers Inngest.
+- A busca remota live (`searchPrices`) continua existindo para quando o termo for muito novo e ainda não estiver no índice.
+
+### Riscos / cuidados
+- **PNCP rate limit**: backfill de 180 dias = ~180 × N modalidades × M páginas. Vou começar conc=2 e watch `429`. Se travar, reduzo para 1 e aumento backoff.
+- **Custo Inngest**: tier free aguenta esse volume tranquilo (eventos são baratos; runs custam só onde há código).
+- **Volume `quote_items`**: 180 dias pode trazer 100k-500k linhas. RLS pública de leitura continua OK; GIN index segura.
+
+### Próximo passo
+1. Você conecta Inngest em Connectors.
+2. Eu rodo a migration FTS (separada, primeiro), depois crio os arquivos do crawler + Inngest, depois wire DB-first no /buscar, depois botão de backfill no admin.
+
+Confirma que conectou Inngest pra eu começar?
