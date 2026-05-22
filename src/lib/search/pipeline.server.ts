@@ -319,8 +319,9 @@ export async function resolvePncpCompraFromContract(
 }
 
 export async function fetchPNCP(query: string, pagina: number, tamanho = 50): Promise<RawItem[]> {
-  const tipos = "edital,ata,contrato";
-  const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=${tipos}&ordenacao=-data&pagina=${pagina}&pagina_tam=${tamanho}&status=todos`;
+  // A API do PNCP NÃO aceita lista separada por vírgula em tipos_documento.
+  // Usar apenas "edital" (contém valor estimado + homologado dos itens via enrichWithPNCPItems).
+  const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=edital&ordenacao=-data&pagina=${pagina}&pagina_tam=${tamanho}&status=todos`;
   const data = await pncpFetchJson<{ items?: RawItem[]; resultados?: RawItem[] }>(url, {
     timeoutMs: 15_000,
   });
