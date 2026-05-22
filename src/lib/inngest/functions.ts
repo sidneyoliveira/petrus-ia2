@@ -38,10 +38,13 @@ export const backfillStart = inngest.createFunction(
         events.push({ name: "crawler/discover.window", data: { dataInicial: ymd, dataFinal: ymd, modalidade: mod } });
       }
     }
-    for (let i = 0; i < events.length; i += 100) {
-      await step.sendEvent(`fanout-${i}`, events.slice(i, i + 100));
+    // Trava de custo: limite hard de 2000 janelas para não estourar o free tier do Inngest (50k execuções/mês).
+    const MAX_WINDOWS = 2000;
+    const capped = events.slice(0, MAX_WINDOWS);
+    for (let i = 0; i < capped.length; i += 100) {
+      await step.sendEvent(`fanout-${i}`, capped.slice(i, i + 100));
     }
-    return { dispatched: events.length, days };
+    return { dispatched: capped.length, requested: events.length, days, capped: capped.length < events.length };
   },
 );
 
@@ -52,7 +55,7 @@ export const discoverWindow = inngest.createFunction(
     retries: 3,
     triggers: [
       { event: "crawler/discover.window" },
-      { cron: "0 */2 * * *" },
+      { cron: "0 */6 * * *" },
     ],
   },
   async ({ event, step }) => {

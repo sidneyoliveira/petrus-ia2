@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import { backfillTriad, backfillHeal } from "@/lib/backfill.functions";
+import { triggerBackfill } from "@/lib/inngest/trigger.functions";
 import {
   listHarvestQueries,
   addHarvestQuery,
@@ -29,9 +30,11 @@ export const Route = createFileRoute("/admin")({
 function AdminPage() {
   const runTriad = useServerFn(backfillTriad);
   const runHeal = useServerFn(backfillHeal);
+  const runBackfill = useServerFn(triggerBackfill);
   const [triadLog, setTriadLog] = useState<string>("");
   const [healLog, setHealLog] = useState<string>("");
-  const [busy, setBusy] = useState<"triad" | "heal" | null>(null);
+  const [pncpLog, setPncpLog] = useState<string>("");
+  const [busy, setBusy] = useState<"triad" | "heal" | "pncp" | null>(null);
 
   async function doTriad() {
     setBusy("triad");
@@ -54,6 +57,19 @@ function AdminPage() {
       setHealLog(JSON.stringify(r, null, 2));
     } catch (e) {
       setHealLog(`Erro: ${(e as Error).message}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function doPncpBackfill() {
+    setBusy("pncp");
+    setPncpLog("Disparando evento crawler/backfill.start no Inngest...");
+    try {
+      const r = await runBackfill({ data: { days: 180 } });
+      setPncpLog(JSON.stringify(r, null, 2) + "\n\nAcompanhe execução no dashboard do Inngest.");
+    } catch (e) {
+      setPncpLog(`Erro: ${(e as Error).message}`);
     } finally {
       setBusy(null);
     }
@@ -107,6 +123,25 @@ function AdminPage() {
         </section>
 
         <HarvestSection />
+
+        <section className="rounded-xl border border-border bg-card p-4 shadow-card">
+          <h2 className="font-semibold text-sm">4. Backfill PNCP 180 dias (Inngest)</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            Dispara o crawler em background para varrer 180 dias × 5 modalidades do PNCP.
+            Limitado a 2000 janelas (~5% do free tier do Inngest). Cron automático roda a cada 6h
+            no dia anterior. Idempotente — pode rodar várias vezes.
+          </p>
+          <button
+            onClick={doPncpBackfill}
+            disabled={busy !== null}
+            className="mt-3 inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+          >
+            {busy === "pncp" ? "Disparando..." : "Rodar backfill 180 dias"}
+          </button>
+          {pncpLog && (
+            <pre className="mt-3 max-h-72 overflow-auto rounded-md bg-muted p-2 text-[11px]">{pncpLog}</pre>
+          )}
+        </section>
       </main>
       <SiteFooter />
     </div>
