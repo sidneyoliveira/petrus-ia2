@@ -4,7 +4,7 @@
  *  2) discoverWindow → pagina /v1/contratacoes/publicacao e enfileira compras
  *  3) extractCompra → pagina itens da compra, resolve resultados, upsert
  */
-import { inngest } from "./client";
+import { inngest, sendInngestEvent } from "./client";
 import {
   discoverComprasByWindow,
   fetchCompraItens,
@@ -18,6 +18,20 @@ import { normalizePncpItem, upsertCrawledItems } from "../crawler/golden-schema"
 
 function fmtYYYYMMDD(d: Date): string {
   return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Envia eventos via gateway Lovable em lotes. Usamos isto em vez de
+ * `step.sendEvent` porque o connector não fornece INNGEST_EVENT_KEY —
+ * só INNGEST_API_KEY (proxy do gateway) e INNGEST_SIGNING_KEY.
+ */
+async function sendBatch(
+  name: "crawler/discover.window" | "crawler/extract.compra",
+  items: Array<Record<string, unknown>>,
+): Promise<void> {
+  for (const data of items) {
+    await sendInngestEvent(name, data);
+  }
 }
 
 export const backfillStart = inngest.createFunction(
@@ -41,9 +55,9 @@ export const backfillStart = inngest.createFunction(
     // Trava de custo: limite hard de 2000 janelas para não estourar o free tier do Inngest (50k execuções/mês).
     const MAX_WINDOWS = 2000;
     const capped = events.slice(0, MAX_WINDOWS);
-    for (let i = 0; i < capped.length; i += 100) {
-      await step.sendEvent(`fanout-${i}`, capped.slice(i, i + 100));
-    }
+    await step.run("fanout-gateway", () =>
+      sendBatch("crawler/discover.window", capped.map((e) => e.data)),
+    );
     return { dispatched: capped.length, requested: events.length, days, capped: capped.length < events.length };
   },
 );
@@ -65,10 +79,11 @@ export const discoverWindow = inngest.createFunction(
       yest.setUTCDate(yest.getUTCDate() - 1);
       const ymd = fmtYYYYMMDD(yest);
       const fanout = RELEVANT_MODALIDADES.map((m) => ({
-        name: "crawler/discover.window" as const,
-        data: { dataInicial: ymd, dataFinal: ymd, modalidade: m },
+        dataInicial: ymd, dataFinal: ymd, modalidade: m,
       }));
-      await step.sendEvent("cron-fanout", fanout);
+      await step.run("cron-fanout", () =>
+        sendBatch("crawler/discover.window", fanout),
+      );
       return { mode: "cron", dispatched: fanout.length };
     }
     const { dataInicial, dataFinal, modalidade } = ev as { dataInicial: string; dataFinal: string; modalidade: number };
@@ -76,18 +91,15 @@ export const discoverWindow = inngest.createFunction(
       discoverComprasByWindow(dataInicial, dataFinal, modalidade),
     );
     if (compras.length === 0) return { compras: 0 };
-    const events = compras.map((c: PncpCompraRef) => ({
-      name: "crawler/extract.compra" as const,
-      data: {
-        cnpj: c.cnpj, ano: c.ano, sequencial: c.sequencial,
-        orgao: c.orgao, unidade: c.unidade, municipio: c.municipio,
-        uf: c.uf, modalidade: c.modalidade, dataPublicacao: c.dataPublicacao,
-        objetoCompra: c.objetoCompra, url: c.url,
-      },
+    const payloads = compras.map((c: PncpCompraRef) => ({
+      cnpj: c.cnpj, ano: c.ano, sequencial: c.sequencial,
+      orgao: c.orgao, unidade: c.unidade, municipio: c.municipio,
+      uf: c.uf, modalidade: c.modalidade, dataPublicacao: c.dataPublicacao,
+      objetoCompra: c.objetoCompra, url: c.url,
     }));
-    for (let i = 0; i < events.length; i += 100) {
-      await step.sendEvent(`extract-${i}`, events.slice(i, i + 100));
-    }
+    await step.run("extract-fanout", () =>
+      sendBatch("crawler/extract.compra", payloads),
+    );
     return { compras: compras.length };
   },
 );
