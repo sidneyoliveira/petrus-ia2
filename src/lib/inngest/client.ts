@@ -3,49 +3,43 @@
  * connector-gateway da Lovable; o serve endpoint (src/routes/api/public/inngest.ts)
  * usa este mesmo `inngest` para registrar as funções.
  */
-import { Inngest, EventSchemas } from "inngest";
+import { Inngest } from "inngest";
 
-type Events = {
-  "crawler/backfill.start": {
-    data: { days: number; startDate?: string };
-  };
-  "crawler/discover.window": {
-    data: {
-      /** Formato YYYYMMDD. */
-      dataInicial: string;
-      dataFinal: string;
-      modalidade: number;
-    };
-  };
-  "crawler/extract.compra": {
-    data: {
-      cnpj: string;
-      ano: string;
-      sequencial: string;
-      orgao?: string;
-      unidade?: string;
-      municipio?: string;
-      uf?: string;
-      modalidade?: string;
-      dataPublicacao?: string;
-      objetoCompra?: string;
-      url?: string;
-    };
-  };
-};
+export interface BackfillStartData { days: number; startDate?: string }
+export interface DiscoverWindowData {
+  /** Formato YYYYMMDD. */
+  dataInicial: string;
+  dataFinal: string;
+  modalidade: number;
+}
+export interface ExtractCompraData {
+  cnpj: string;
+  ano: string;
+  sequencial: string;
+  orgao?: string;
+  unidade?: string;
+  municipio?: string;
+  uf?: string;
+  modalidade?: string;
+  dataPublicacao?: string;
+  objetoCompra?: string;
+  url?: string;
+}
 
-export const inngest = new Inngest({
-  id: "petrus-ia",
-  schemas: new EventSchemas().fromRecord<Events>(),
-});
+export type EventName =
+  | "crawler/backfill.start"
+  | "crawler/discover.window"
+  | "crawler/extract.compra";
+
+export const inngest = new Inngest({ id: "petrus-ia" });
 
 /**
  * Envia evento via gateway Lovable. Usado pelas server routes (HTTP) —
  * Inngest functions disparam outros eventos via `step.sendEvent`.
  */
-export async function sendInngestEvent<K extends keyof Events>(
-  name: K,
-  data: Events[K]["data"],
+export async function sendInngestEvent(
+  name: EventName,
+  data: Record<string, unknown>,
 ): Promise<void> {
   const LOVABLE_API_KEY = process.env.LOVABLE_API_KEY;
   const INNGEST_API_KEY = process.env.INNGEST_API_KEY;
