@@ -528,9 +528,10 @@ async function fetchPNCP(query: string, pagina: number, tamanho = 50): Promise<R
  * Custo controlado: 1 página × até `cap` processos × 1 GET cada.
  * Default cap=15 para inline (search ao vivo). Crawler em background usa 60.
  */
-async function fetchM2A(searchTerm: string, cap = 15): Promise<RawItem[]> {
+async function fetchM2A(searchTerm: string, cap = 15, budgetMs = 18_000): Promise<RawItem[]> {
   const term = searchTerm.trim();
   if (term.length < 2) return [];
+  const deadline = Date.now() + budgetMs;
   let listing: { id: string; slug: string; url: string }[] = [];
   try {
     listing = await fetchM2aListing({ search: term, situacao: 7, page: 1 });
@@ -544,6 +545,10 @@ async function fetchM2A(searchTerm: string, cap = 15): Promise<RawItem[]> {
   const out: RawItem[] = [];
   const CONC = 5;
   for (let i = 0; i < capped.length; i += CONC) {
+    if (Date.now() > deadline) {
+      console.warn(`[m2a] budget exceeded term="${term}" processed=${out.length}/${capped.length}`);
+      break;
+    }
     const chunk = capped.slice(i, i + CONC);
     const settled = await Promise.allSettled(chunk.map((p) => fetchM2aPncpRef(p.url)));
     settled.forEach((s, idx) => {
@@ -560,6 +565,7 @@ async function fetchM2A(searchTerm: string, cap = 15): Promise<RawItem[]> {
         url: ref.url,
         item_url: ref.url,
         situacao: "Finalizada",
+        _source: "M2A",
         _sourceDomain: "compras.m2atecnologia.com.br",
         _sourceName: "M2A Tecnologia",
       });
@@ -684,7 +690,7 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
       fromControle?.sequencial ??
       "";
     const seq = String(seqRaw).replace(/\D/g, "");
-    const isPNCP = !r._source || r._source === "PNCP" || r._source === "Transparência" || r._source === "Compras.gov.br";
+    const isPNCP = !r._source || r._source === "PNCP" || r._source === "Transparência" || r._source === "Compras.gov.br" || r._source === "M2A";
     if ((isPNCP || parsed || fromControle) && cnpj.length === 14 && ano && seq && enrichable.length < limit) {
       const tipo = String(r.document_type ?? r.tipo_documento ?? parsed?.tipo ?? "").toLowerCase();
       enrichable.push({
@@ -743,9 +749,13 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
   for (const s of fetched) {
     if (s.status !== "fulfilled") continue;
     const { parent, items } = s.value;
+    const isM2A = parent._source === "M2A";
     if (!items || items.length === 0) {
       // Resultado oficial do PNCP sem itens individuais não deve virar card:
       // o usuário pediu lista de ITENS, não lista de processos/atas/editais.
+      // M2A: descobre processos por TEMA — sem itens reais do PNCP, descarta
+      // (nunca mostrar o objeto da contratação como se fosse o item).
+      if (isM2A) continue;
       if (parent._source === "Outro" || parent._supplier) parentsFallback.push(parent);
       continue;
     }
@@ -759,6 +769,10 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
     // Se nenhum item bater com a query, NÃO descarta: pega os itens com
     // valor unitário mesmo assim (podem ser variantes/sinônimos) e marca
     // como fallback de menor prioridade.
+    // EXCEÇÃO M2A: o portal foi consultado por TEMA amplo (ex.: "material
+    // escolar"); se nenhum item bate com a query específica (ex.: "caderno"),
+    // o processo inteiro é irrelevante — descarta.
+    if (isM2A && relevant.length === 0) continue;
     const useItems = relevant.length > 0 ? relevant : items;
     // Tenta enriquecer com /resultados (valor HOMOLOGADO real) para itens
     // que ainda não trazem valorUnitarioHomologado direto na lista /itens.
