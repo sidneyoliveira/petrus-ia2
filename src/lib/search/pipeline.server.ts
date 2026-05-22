@@ -426,13 +426,14 @@ export interface PcpProcesso {
 }
 export interface PcpItem {
   codigoItem?: number | string;
+  codigo?: number | string;
   descricao?: string;
   unidade?: string;
   quantidade?: number;
   valorReferencia?: number;
   melhorLance?: number;
   valorTotal?: number;
-  situacao?: string;
+  situacao?: string | { codigo?: number; descricao?: string };
 }
 export async function fetchPortalComprasPublicas(
   query: string,
@@ -446,10 +447,13 @@ export async function fetchPortalComprasPublicas(
   const SOURCE_DOMAIN = "portaldecompraspublicas.com.br";
   const BASE = "https://compras.api.portaldecompraspublicas.com.br/v2/licitacao";
 
-  // Endpoint A — processos por objeto (status 3 = abertos/em andamento)
+  // Endpoint A — processos por objeto. NÃO filtramos por codigoStatus: o
+  // status 3 devolve majoritariamente processos cancelados/encerrados sem
+  // valores; sem filtro pegamos publicados/abertos/homologados em ordem
+  // decrescente de data, que é o que queremos para cotação.
   const listUrl =
     `${BASE}/processos?objeto=${encodeURIComponent(term)}` +
-    `&limitePagina=${maxProcessos}&pagina=1&codigoStatus=3`;
+    `&limitePagina=${maxProcessos}&pagina=1`;
   let processos: PcpProcesso[] = [];
   try {
     const ctl = new AbortController();
@@ -499,11 +503,23 @@ export async function fetchPortalComprasPublicas(
           clearTimeout(to);
           if (!res.ok) return { processo: p, itens: [] as PcpItem[] };
           const j = (await res.json()) as
-            | { itens?: { result?: PcpItem[] }; result?: PcpItem[] }
+            | {
+                isLote?: boolean;
+                itens?: { result?: PcpItem[] } | null;
+                lotes?: { result?: { itens?: PcpItem[] }[] } | null;
+                result?: PcpItem[];
+              }
             | PcpItem[];
-          const itens: PcpItem[] = Array.isArray(j)
-            ? j
-            : (j.itens?.result ?? j.result ?? []);
+          let itens: PcpItem[];
+          if (Array.isArray(j)) {
+            itens = j;
+          } else if (j.isLote && j.lotes?.result) {
+            // Quando o processo é organizado em lotes, os itens estão dentro
+            // de cada lote: lotes.result[].itens[]
+            itens = j.lotes.result.flatMap((lote) => lote.itens ?? []);
+          } else {
+            itens = j.itens?.result ?? j.result ?? [];
+          }
           return { processo: p, itens };
         } catch {
           clearTimeout(to);
@@ -526,7 +542,12 @@ export async function fetchPortalComprasPublicas(
       for (const it of useItems) {
         const unit = validPrice(it.melhorLance) ?? validPrice(it.valorReferencia);
         if (!unit && !validPrice(it.valorReferencia)) continue;
-        const id = `pcp-${processo.codigoLicitacao}-${it.codigoItem ?? out.length}`;
+        const itemCode = it.codigoItem ?? it.codigo ?? out.length;
+        const id = `pcp-${processo.codigoLicitacao}-${itemCode}`;
+        const situacaoStr =
+          typeof it.situacao === "string"
+            ? it.situacao
+            : it.situacao?.descricao;
         out.push({
           id,
           numero: String(processo.numero ?? processo.codigoLicitacao ?? ""),
@@ -543,7 +564,7 @@ export async function fetchPortalComprasPublicas(
           valor_unitario_homologado: validPrice(it.melhorLance),
           valor_total_item: validPrice(it.valorTotal),
           modalidade_licitacao_nome: processo.modalidade,
-          situacao_nome: it.situacao ?? processo.modalidade,
+          situacao_nome: situacaoStr ?? processo.modalidade,
           data: processo.dataAbertura ?? processo.dataLicitacao,
           tipo_documento: "outro",
           url: `https://compras.publicas.gov.br/ProcessoEletronico/Acompanhamento/${processo.codigoLicitacao}`,
