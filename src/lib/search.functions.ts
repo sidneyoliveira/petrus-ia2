@@ -2249,6 +2249,16 @@ export const searchPrices = createServerFn({ method: "POST" })
       // para cobrir processos que mencionam o item exato no título.
       tasks.push(fetchM2A(data.query, 10));
     }
+    // Rodada G — Portal de Compras Públicas (PCP): API pública que devolve
+    // itens já granulares com valor unitário (referência + melhor lance).
+    // Cobre milhares de licitações municipais ausentes do PNCP.
+    tasks.push(fetchPortalComprasPublicas(data.query, 10));
+    if (data.tema && data.tema.length >= 2 && data.tema !== data.query) {
+      // Quando há tema (ex.: "material escolar"), busca também pelo tema:
+      // o filtro por descrição garante que só itens batendo na query
+      // específica (ex.: "caderno") entrem no resultado final.
+      tasks.push(fetchPortalComprasPublicas(data.tema, 10));
+    }
     const settled = await Promise.allSettled(tasks);
     let raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
 
