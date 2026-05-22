@@ -1,104 +1,67 @@
-# Plano: Petrus IA → paridade M2A (Enterprise)
-
-Vou quebrar em **6 rodadas curtas**, cada uma entregável e testável. Hoje implemento a **Rodada A (schema + tríade matemática)**, que destrava todas as outras.
-
----
-
-## Estado atual (o que já existe)
-
-- `quote_items` já tem: `titulo`, `descricao`, `valor`, `valor_total`, `valor_tipo`, `quantidade`, `unidade`, `fornecedor`, `cnpj`, `orgao`, `uf`, `data`, `url`, `source_excerpt`, `embedding` (pgvector), `valor_inferido*` (self-healing).
-- Self-healing (Gemini 3 Flash) já infere unitário a partir do `source_excerpt`.
-- pgvector + `match_quote_items` RPC prontos para RAG.
-- Enriquecimento de CNPJ via BrasilAPI cacheado.
-- Frontend hoje é lista de cards (`ResultCard`) + modal, sem tabela facetada.
-
-## O que falta para virar M2A
-
-Schema relacional rígido, **validação matemática defensiva**, **filtros facetados**, **dashboard tabular**, **cesta de cotação** e **RLHF de correção de extração**.
+## Escopo
+Cinco frentes, cada uma com risco diferente. Vou executar nesta ordem, commitando entre fases para você poder reverter qualquer uma sem perder o resto.
 
 ---
 
-## Rodadas
+### Fase 1 — Autenticação + perfis (baixo risco)
+- Migration: tabela `profiles` (user_id FK auth.users, display_name, avatar_url, email) com RLS "dono lê/edita o seu", trigger `handle_new_user` populando no signup.
+- Configurar social auth: Google via `configure_social_auth` (+ email/senha mantido).
+- Rotas novas: `/login`, `/auth/callback` (broker Lovable), `/_authenticated` layout guard.
+- `SiteHeader`: botão "Entrar" → menu com avatar quando logado, "Sair".
+- `__root.tsx`: `onAuthStateChange` → `router.invalidate()` + `queryClient.invalidateQueries()`.
+- **Não exige login pra usar /buscar** — login só é necessário pra salvar cesta no servidor.
 
-### 🔴 Rodada A — Schema rígido + Matemática Defensiva *(esta rodada)*
+### Fase 2 — Cesta no banco (baixo risco)
+- Migration: tabela `baskets` (id, user_id, name, items jsonb, created_at, updated_at) com RLS "dono CRUD".
+- ServerFn `saveBasket`, `listBaskets`, `loadBasket`, `deleteBasket` com `requireSupabaseAuth`.
+- `useBasket` mantém localStorage como cache, mas ganha `syncToCloud()` / `loadFromCloud(id)`.
+- Nova página `/_authenticated/cestas`: lista cestas salvas, abrir/renomear/excluir.
+- Em `/cotacao`: botão "Salvar cesta na nuvem" (se logado) + "Carregar cesta".
 
-**Migração SQL** em `quote_items`:
-- `objeto_estruturado text` (título canônico curto do item, separado de `descricao` técnica)
-- `valor_total_calculado numeric` (qtd × unitário)
-- `math_status text` — `ok` | `divergente` | `incompleto` | `single_value`
-- `math_delta_pct numeric` (|total − calc| / total)
-- `extraction_quality text` — `tríade_ok` | `sem_qtd` | `sem_unitário` | `só_global` | `lixo`
-- índice em `(math_status, extraction_quality)` para o dashboard filtrar
+### Fase 3 — UI compacta (baixo risco)
+- `ResultsTable`: remover colunas `mathStatus`, `extractionQuality`, `valorTotalCalculado`, `delta`; manter só Item, Órgão, UF, Data, Unit, Qtd, Unitário, Total, Fonte, Ações.
+- Ações vira `<TooltipProvider>` com ícones: `<Eye/>` (ver), `<ShoppingBasket/>` (cesta), `<Flag/>` (corrigir), `<ExternalLink/>` (fonte).
+- `ResultCard`: idem — esconde bloco "Validação matemática" e badges de extração.
+- `PriceResult` type: campos matemáticos ficam (backend continua calculando para o healer), só somem da UI.
 
-**Lógica `src/lib/extract/triad.ts`** (puro, testável):
-- `classifyTriad({quantidade, valor, valor_total})` → retorna `extraction_quality` + `math_status` + `delta_pct`.
-- Regras:
-  - Se `qtd && unit && total` e |qtd·unit − total|/total ≤ 0.02 → `tríade_ok` + `ok`.
-  - Se divergir > 2% → `divergente` (não descarta, marca pra healer reprocessar).
-  - Se só tem `valor_total` sem qtd → `só_global` (sinal de "valor global da licitação", baixa confiança).
-  - Sem nenhum sinal numérico → `lixo` (filtrado por padrão do dashboard).
-- Testes unitários em `src/lib/extract/triad.test.ts`.
+### Fase 4 — Log real por fonte (médio risco)
+- Novo server route `src/routes/api/search-stream.ts` que streama NDJSON:
+  - `{"event":"source_start","name":"PNCP"}`
+  - `{"event":"source_done","name":"PNCP","count":42,"ms":1230}`
+  - `{"event":"final","results":[...],"total":...}`
+- Refatorar `search.functions.ts` extraindo `runSearch(query, {onProgress})` — server-fn atual vira wrapper sem callback (preserva contrato existente), route nova usa o callback.
+- `/buscar`: substitui `useQuery(getSearch)` por um hook customizado `useStreamingSearch` que consome o NDJSON via `fetch` + `ReadableStream`. Fallback pra server-fn se o stream falhar.
+- `LiveSearchLog` passa a mostrar nomes reais conforme chegam: "✓ PNCP (42 itens, 1.2s)", "⏳ Transparência Itarema…".
 
-**Wire no `search.functions.ts`**: ao persistir resultado novo em `quote_items`, rodar `classifyTriad` e gravar os campos. Resultados retornados ao frontend ganham `mathStatus` e `extractionQuality` em `PriceResult`.
-
-**Healer rodada 2 estendido**: passa a reprocessar itens com `math_status='divergente'` (não só `valor IS NULL`).
-
-### Rodada B — Dashboard facetado (tabela M2A-style)
-- Nova rota `/dashboard` com `<Table>` shadcn: colunas Item, Unidade, Qtd, Unitário, Total, Órgão/UF, Data, Fornecedor, ✅ Matemática.
-- Sidebar de filtros: UF, faixa de valor unitário, origem, **só tríade_ok**, data, modalidade.
-- Cada linha expande (`Collapsible`) mostrando `descricao` + `source_excerpt` + botão "Ver Fonte com Destaque" (já existe).
-- Badge colorido por `math_status` (verde/âmbar/vermelho).
-
-### Rodada C — Cesta de cotação ("Adicionar à Minha Cotação")
-- Tabela `quote_baskets` + `basket_items` (RLS por sessão anônima via `basket_token` em localStorage).
-- Botão `+ Selecionar` em cada linha.
-- Página `/cotacao` lista itens da cesta, calcula mediana/média/min/max por item, exporta CSV/PDF (reusa `src/lib/export.ts`).
-
-### Rodada D — RLHF "❌ Corrigir Extração"
-- Botão no card abre dialog: "Onde estava o valor unitário?" (textarea/seletor de span).
-- Tabela `extraction_corrections (item_id, field, before, after, source_domain, source_url, user_note, created_at, embedding)`.
-- Próxima busca: antes de chamar o healer/extractor, faz `match_corrections(query_embedding, domain)` e injeta as 3 correções mais similares no prompt como few-shot ("nesta fonte, valor unitário fica na coluna 4").
-
-### Rodada E — Reverse engineering de portais (M2A, BLL, PCP)
-- `src/lib/sources/m2a.ts`, `bll.ts`, `pcp.ts`: chamam o endpoint JSON real (descoberto via Network tab) em vez de raspar HTML.
-- Cada source devolve já no schema rígido → entra direto em `quote_items` com `extraction_quality='tríade_ok'`.
-
-### Rodada F — Filtro FPM (porte de município)
-- Tabela `municipios_fpm` (seed do IBGE/STN).
-- Filtro "comparar só com municípios de FPM similar" no dashboard.
+### Fase 5 — Prioridade valor contratado (alto risco, escopo limitado)
+**Não mexer no fluxo atual de extração.** Adicionar camada nova:
+- Migration: colunas `quote_items.valor_contratado` (numeric), `valor_contratado_fonte` (text — 'ata'|'contrato'|'homologacao'|null), `contract_fetch_status` ('pending'|'ok'|'fail'|'na').
+- Novo `src/lib/contract-resolver.server.ts`: dado um `quote_item` com URL do PNCP/portal, tenta:
+  1. Detectar links de ata/contrato/termo no payload bruto (já temos `source_payload_raw`).
+  2. Buscar a página/PDF via Firecrawl scrape (`formats: ['markdown']`).
+  3. Extrair valor unitário homologado via Lovable AI (`google/gemini-2.5-flash`) com prompt focado: "retorne valor unitário contratado ou null".
+- ServerFn `resolveContractValue(itemId)` chamado sob demanda + um job em backfill via página `/admin`.
+- No PriceResult exibido: `valor` passa a ser `valor_contratado ?? valor_homologado ?? valor_estimado`, com badge mostrando a fonte ("Contratado" / "Homologado" / "Estimado").
+- Sem fila/cron — primeiro acesso a um item dispara `resolveContractValue` em background (fire-and-forget) e atualiza no DB pra próximas consultas.
 
 ---
 
-## Detalhes técnicos da Rodada A
-
-```text
-src/
-├── lib/
-│   ├── extract/
-│   │   ├── triad.ts          # classifyTriad() puro
-│   │   └── triad.test.ts     # vitest
-│   ├── search.functions.ts   # +classifyTriad ao persistir
-│   ├── heal/value-healer.server.ts  # +query math_status='divergente'
-│   └── types.ts              # PriceResult += mathStatus, extractionQuality, objetoEstruturado
-└── components/ResultCard.tsx # badge math_status
-```
-
-Migração:
+### Migrations resumidas
 ```sql
-ALTER TABLE quote_items
-  ADD COLUMN objeto_estruturado text,
-  ADD COLUMN valor_total_calculado numeric,
-  ADD COLUMN math_status text,
-  ADD COLUMN math_delta_pct numeric,
-  ADD COLUMN extraction_quality text;
-CREATE INDEX quote_items_quality_idx
-  ON quote_items (extraction_quality, math_status);
+-- Fase 1
+create table profiles (user_id uuid primary key references auth.users on delete cascade, ...);
+-- Fase 2
+create table baskets (id uuid pk, user_id uuid not null, name text, items jsonb, ...);
+-- Fase 5
+alter table quote_items add column valor_contratado numeric,
+  add column valor_contratado_fonte text,
+  add column contract_fetch_status text default 'pending';
 ```
 
-Sem mudanças destrutivas em colunas existentes — só aditivo, seguro pra dados já gravados (ficam `NULL` e são preenchidos no próximo backfill/busca).
+### Riscos / observações
+- **Fase 4** é a mais arriscada: TanStack server routes streamam bem em Workers, mas SSR/preload precisa de cuidado. Vou manter o `useQuery` antigo como fallback.
+- **Fase 5** consome créditos do Firecrawl e do Lovable AI — vou limitar a 1 chamada/item, com cache permanente em `quote_items`.
+- "Cotação de fornecedor da internet" (e-commerce) você pediu pra **não** implementar agora — confirmado, fora de escopo.
+- Você está em `/cotacao` agora; depois da Fase 3 essa página fica mais limpa também.
 
----
-
-## Confirma?
-
-Sigo com a **Rodada A** agora (migração + `triad.ts` + wire + badge no card). As rodadas B–F ficam pra mensagens seguintes, uma por vez, pra você poder testar a cada passo.
+Confirma a ordem e que posso seguir tudo numa rodada longa? Se preferir, posso parar após a Fase 3 pra você validar antes de eu encostar no streaming e no resolver de contratos.

@@ -14,6 +14,33 @@ export type Database = {
   }
   public: {
     Tables: {
+      baskets: {
+        Row: {
+          created_at: string
+          id: string
+          items: Json
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          items?: Json
+          name?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          items?: Json
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       cnpj_cache: {
         Row: {
           ativo: boolean | null
@@ -160,9 +187,38 @@ export type Database = {
         }
         Relationships: []
       }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          display_name: string | null
+          email: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          display_name?: string | null
+          email?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          display_name?: string | null
+          email?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       quote_items: {
         Row: {
           cnpj: string | null
+          contract_fetch_status: string | null
+          contract_fetched_at: string | null
           created_at: string
           data: string | null
           descricao: string | null
@@ -195,6 +251,8 @@ export type Database = {
           updated_at: string
           url: string | null
           valor: number | null
+          valor_contratado: number | null
+          valor_contratado_fonte: string | null
           valor_inferido: number | null
           valor_inferido_at: string | null
           valor_inferido_confianca: number | null
@@ -206,6 +264,8 @@ export type Database = {
         }
         Insert: {
           cnpj?: string | null
+          contract_fetch_status?: string | null
+          contract_fetched_at?: string | null
           created_at?: string
           data?: string | null
           descricao?: string | null
@@ -238,6 +298,8 @@ export type Database = {
           updated_at?: string
           url?: string | null
           valor?: number | null
+          valor_contratado?: number | null
+          valor_contratado_fonte?: string | null
           valor_inferido?: number | null
           valor_inferido_at?: string | null
           valor_inferido_confianca?: number | null
@@ -249,6 +311,8 @@ export type Database = {
         }
         Update: {
           cnpj?: string | null
+          contract_fetch_status?: string | null
+          contract_fetched_at?: string | null
           created_at?: string
           data?: string | null
           descricao?: string | null
@@ -281,6 +345,8 @@ export type Database = {
           updated_at?: string
           url?: string | null
           valor?: number | null
+          valor_contratado?: number | null
+          valor_contratado_fonte?: string | null
           valor_inferido?: number | null
           valor_inferido_at?: string | null
           valor_inferido_confianca?: number | null
