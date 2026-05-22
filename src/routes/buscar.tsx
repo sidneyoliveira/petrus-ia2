@@ -318,26 +318,42 @@ function Buscar() {
               onSubmit={(e) => {
                 e.preventDefault();
                 const v = input.trim();
-                navigate({ to: "/buscar", search: { q: v } });
+                const t = temaInput.trim();
+                navigate({ to: "/buscar", search: { q: v, tema: t } });
                 if (v.length >= 2) refetch();
               }}
-              className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 shadow-card"
+              className="flex flex-col gap-2 rounded-xl border border-border bg-background px-3 py-2 shadow-card"
               aria-label="Pesquisar item"
             >
-              <Search className="h-4 w-4 text-muted-foreground shrink-0" />
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Descreva o item a cotar — ex. impressora multifuncional laser monocromática"
-                className="flex-1 bg-transparent outline-none text-sm py-1.5"
-                autoFocus
-                aria-label="Termo de pesquisa"
-              />
-              {isFetching && <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />}
-              <button type="submit" className="hidden sm:inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 transition-smooth">
-                <Sparkles className="h-3.5 w-3.5" />
-                Buscar com IA
-              </button>
+              <div className="flex items-center gap-2">
+                <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+                <input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Item a cotar — ex. caderno brochura 96 folhas"
+                  className="flex-1 bg-transparent outline-none text-sm py-1.5"
+                  autoFocus
+                  aria-label="Termo de pesquisa"
+                  maxLength={200}
+                />
+                {isFetching && <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />}
+                <button type="submit" className="hidden sm:inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 transition-smooth">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Buscar com IA
+                </button>
+              </div>
+              <div className="flex items-center gap-2 border-t border-border/60 pt-2">
+                <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <input
+                  value={temaInput}
+                  onChange={(e) => setTemaInput(e.target.value)}
+                  placeholder="Tema/objeto da licitação (opcional) — ex. material escolar, gêneros alimentícios"
+                  className="flex-1 bg-transparent outline-none text-xs py-1 text-muted-foreground placeholder:text-muted-foreground/70"
+                  aria-label="Tema da licitação"
+                  maxLength={120}
+                  title='Ajuda o sistema a achar processos mais amplos. Ex.: item "caderno" + tema "material escolar".'
+                />
+              </div>
             </form>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <div className="text-xs text-muted-foreground">
