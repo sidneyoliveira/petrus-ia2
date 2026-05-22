@@ -1110,6 +1110,65 @@ async function fetchFirecrawlWeb(query: string, siteFilters: string[], catalog: 
   }
 }
 
+/**
+ * Faz UMA chamada Firecrawl por domínio. Necessário porque o Google enviesa
+ * fortemente a forma `(site:A OR site:B OR ...)` para o domínio com maior
+ * PageRank (PNCP/Compras.gov), deixando TCU/Comprasnet/Painel de Preços/BPS
+ * Saúde sem hits — embora esses portais tenham os dados.
+ *
+ * Roda em paralelo, com limit baixo (8 resultados/domínio) e só na query
+ * principal (não nas variantes) — custo: N calls × 1 crédito por busca do
+ * usuário, onde N é o número de portais nomeados (default 6).
+ */
+async function fetchFirecrawlPerDomain(
+  query: string,
+  domains: string[],
+  catalog: { domain: string; name: string }[],
+): Promise<RawItem[]> {
+  const key = process.env.FIRECRAWL_API_KEY;
+  if (!key || domains.length === 0) return [];
+  const tasks = domains.map(async (domain): Promise<RawItem[]> => {
+    const q = `${query} (preço OR "R$" OR valor OR contrato OR ata OR homologação OR pregão) site:${domain}`;
+    try {
+      const res = await fetch("https://api.firecrawl.dev/v2/search", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q, limit: 8, lang: "pt", country: "br" }),
+      });
+      if (!res.ok) {
+        console.warn(`Firecrawl per-domain ${domain} HTTP`, res.status);
+        return [];
+      }
+      const json = (await res.json()) as {
+        data?: { web?: Array<{ url?: string; title?: string; description?: string }> } | Array<{ url?: string; title?: string; description?: string }>;
+        web?: Array<{ url?: string; title?: string; description?: string }>;
+      };
+      const arr = Array.isArray(json.data) ? json.data : (json.data?.web ?? json.web ?? []);
+      return arr.map((r, i): RawItem => {
+        const meta = sourceMetaForUrl(r.url, catalog);
+        return {
+          id: `fcd-${domain}-${i}-${(r.url ?? "").slice(-32)}`,
+          title: r.title ?? r.url ?? "Resultado web",
+          description: r.description ?? "",
+          url: r.url,
+          tipo_documento: /ata/i.test(`${r.title} ${r.url}`) ? "ata"
+            : /contrato/i.test(`${r.title} ${r.url}`) ? "contrato"
+            : /edital|preg/i.test(`${r.title} ${r.url}`) ? "edital" : "outro",
+          // Garante que a fonte casa exatamente com o nome do chip
+          _source: meta.name ?? domain,
+          _sourceDomain: meta.domain ?? domain,
+          _sourceName: meta.name ?? domain,
+        };
+      });
+    } catch (e) {
+      console.warn(`Firecrawl per-domain ${domain} error`, (e as Error).message);
+      return [];
+    }
+  });
+  const settled = await Promise.allSettled(tasks);
+  return settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
+}
+
 // Busca FORNECEDORES REAIS na internet (fabricantes/distribuidores B2B,
 // catálogos, e-commerces especializados). Exclui marketplaces proibidos.
 // Inciso V da Lei 14.133/2021 — cotação direta com fornecedores.
@@ -1930,6 +1989,15 @@ export const searchPrices = createServerFn({ method: "POST" })
       // Cotação com fornecedores reais (catálogos / fabricantes / distribuidores)
       tasks.push(fetchFirecrawlSuppliers(v));
     }
+    // Cobertura garantida dos portais NOMEADOS na UI (TCU, Comprasnet,
+    // Painel de Preços, BPS Saúde, CMED Anvisa, TCE-CE) — uma chamada
+    // Firecrawl POR domínio para evitar o viés do operador OR do Google.
+    // Só na query principal para não estourar créditos.
+    const namedDomains = catalog
+      .filter((s) => !/^pncp\.gov\.br$|^compras\.gov\.br$/.test(s.domain))
+      .slice(0, 6)
+      .map((s) => s.domain);
+    tasks.push(fetchFirecrawlPerDomain(data.query, namedDomains, catalog));
     // Mineração de anexos (PDFs/HTML de Atas e Termos de Homologação)
     // Roda só na variante principal para limitar custo do Firecrawl.
     tasks.push(mineAttachments(data.query));
