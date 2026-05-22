@@ -2064,6 +2064,18 @@ export const searchPrices = createServerFn({ method: "POST" })
     // de processo via Firecrawl-search com site: e extrai itens (tríade) via
     // scrapeAndMine. Cobre licitações municipais ausentes do PNCP.
     tasks.push(minePortais(data.query));
+    // Rodada F — M2A Tecnologia: portal que indexa licitações por OBJETO/TEMA.
+    // Quando o usuário informa `tema` (ex.: "material escolar"), descobre
+    // processos relevantes ali e o enrich /itens filtra pelos itens que
+    // batem com a `query` específica (ex.: "caderno"). Sem `tema`, usa a
+    // própria query como termo de busca.
+    const m2aTerm = (data.tema && data.tema.length >= 2) ? data.tema : data.query;
+    tasks.push(fetchM2A(m2aTerm, 15));
+    if (data.tema && data.tema !== data.query) {
+      // Quando há tema, faz uma segunda passada com a query específica
+      // para cobrir processos que mencionam o item exato no título.
+      tasks.push(fetchM2A(data.query, 10));
+    }
     const settled = await Promise.allSettled(tasks);
     let raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
 
