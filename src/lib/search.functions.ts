@@ -685,7 +685,7 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
       fromControle?.sequencial ??
       "";
     const seq = String(seqRaw).replace(/\D/g, "");
-    const isPNCP = !r._source || r._source === "PNCP" || r._source === "Transparência" || r._source === "Compras.gov.br";
+    const isPNCP = !r._source || r._source === "PNCP" || r._source === "Transparência" || r._source === "Compras.gov.br" || r._source === "M2A";
     if ((isPNCP || parsed || fromControle) && cnpj.length === 14 && ano && seq && enrichable.length < limit) {
       const tipo = String(r.document_type ?? r.tipo_documento ?? parsed?.tipo ?? "").toLowerCase();
       enrichable.push({
