@@ -20,6 +20,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiOcrRouteImport } from './routes/api/ocr'
 import { Route as AuthenticatedCestasRouteImport } from './routes/_authenticated/cestas'
 import { Route as ApiPublicInngestRouteImport } from './routes/api/public/inngest'
+import { Route as ApiPublicSearchStreamRouteImport } from './routes/api/public/search/stream'
 import { Route as ApiPublicHooksHarvestTickRouteImport } from './routes/api/public/hooks/harvest-tick'
 
 const SobreRoute = SobreRouteImport.update({
@@ -76,6 +77,11 @@ const ApiPublicInngestRoute = ApiPublicInngestRouteImport.update({
   path: '/api/public/inngest',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicSearchStreamRoute = ApiPublicSearchStreamRouteImport.update({
+  id: '/api/public/search/stream',
+  path: '/api/public/search/stream',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicHooksHarvestTickRoute =
   ApiPublicHooksHarvestTickRouteImport.update({
     id: '/api/public/hooks/harvest-tick',
@@ -95,6 +101,7 @@ export interface FileRoutesByFullPath {
   '/api/ocr': typeof ApiOcrRoute
   '/api/public/inngest': typeof ApiPublicInngestRoute
   '/api/public/hooks/harvest-tick': typeof ApiPublicHooksHarvestTickRoute
+  '/api/public/search/stream': typeof ApiPublicSearchStreamRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -108,6 +115,7 @@ export interface FileRoutesByTo {
   '/api/ocr': typeof ApiOcrRoute
   '/api/public/inngest': typeof ApiPublicInngestRoute
   '/api/public/hooks/harvest-tick': typeof ApiPublicHooksHarvestTickRoute
+  '/api/public/search/stream': typeof ApiPublicSearchStreamRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -123,6 +131,7 @@ export interface FileRoutesById {
   '/api/ocr': typeof ApiOcrRoute
   '/api/public/inngest': typeof ApiPublicInngestRoute
   '/api/public/hooks/harvest-tick': typeof ApiPublicHooksHarvestTickRoute
+  '/api/public/search/stream': typeof ApiPublicSearchStreamRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -138,6 +147,7 @@ export interface FileRouteTypes {
     | '/api/ocr'
     | '/api/public/inngest'
     | '/api/public/hooks/harvest-tick'
+    | '/api/public/search/stream'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -151,6 +161,7 @@ export interface FileRouteTypes {
     | '/api/ocr'
     | '/api/public/inngest'
     | '/api/public/hooks/harvest-tick'
+    | '/api/public/search/stream'
   id:
     | '__root__'
     | '/'
@@ -165,6 +176,7 @@ export interface FileRouteTypes {
     | '/api/ocr'
     | '/api/public/inngest'
     | '/api/public/hooks/harvest-tick'
+    | '/api/public/search/stream'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -179,6 +191,7 @@ export interface RootRouteChildren {
   ApiOcrRoute: typeof ApiOcrRoute
   ApiPublicInngestRoute: typeof ApiPublicInngestRoute
   ApiPublicHooksHarvestTickRoute: typeof ApiPublicHooksHarvestTickRoute
+  ApiPublicSearchStreamRoute: typeof ApiPublicSearchStreamRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -260,6 +273,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicInngestRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/search/stream': {
+      id: '/api/public/search/stream'
+      path: '/api/public/search/stream'
+      fullPath: '/api/public/search/stream'
+      preLoaderRoute: typeof ApiPublicSearchStreamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/hooks/harvest-tick': {
       id: '/api/public/hooks/harvest-tick'
       path: '/api/public/hooks/harvest-tick'
@@ -294,7 +314,18 @@ const rootRouteChildren: RootRouteChildren = {
   ApiOcrRoute: ApiOcrRoute,
   ApiPublicInngestRoute: ApiPublicInngestRoute,
   ApiPublicHooksHarvestTickRoute: ApiPublicHooksHarvestTickRoute,
+  ApiPublicSearchStreamRoute: ApiPublicSearchStreamRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
