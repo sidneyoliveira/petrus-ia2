@@ -744,9 +744,13 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
   for (const s of fetched) {
     if (s.status !== "fulfilled") continue;
     const { parent, items } = s.value;
+    const isM2A = parent._source === "M2A";
     if (!items || items.length === 0) {
       // Resultado oficial do PNCP sem itens individuais não deve virar card:
       // o usuário pediu lista de ITENS, não lista de processos/atas/editais.
+      // M2A: descobre processos por TEMA — sem itens reais do PNCP, descarta
+      // (nunca mostrar o objeto da contratação como se fosse o item).
+      if (isM2A) continue;
       if (parent._source === "Outro" || parent._supplier) parentsFallback.push(parent);
       continue;
     }
@@ -760,6 +764,10 @@ async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): P
     // Se nenhum item bater com a query, NÃO descarta: pega os itens com
     // valor unitário mesmo assim (podem ser variantes/sinônimos) e marca
     // como fallback de menor prioridade.
+    // EXCEÇÃO M2A: o portal foi consultado por TEMA amplo (ex.: "material
+    // escolar"); se nenhum item bate com a query específica (ex.: "caderno"),
+    // o processo inteiro é irrelevante — descarta.
+    if (isM2A && relevant.length === 0) continue;
     const useItems = relevant.length > 0 ? relevant : items;
     // Tenta enriquecer com /resultados (valor HOMOLOGADO real) para itens
     // que ainda não trazem valorUnitarioHomologado direto na lista /itens.
