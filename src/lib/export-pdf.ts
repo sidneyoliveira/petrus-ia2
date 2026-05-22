@@ -54,7 +54,7 @@ export function exportCotacaoPdf(input: CotacaoPdfInput): void {
   doc.setFontSize(9);
   doc.setTextColor(110);
   doc.text(
-    "Cotação gerada via CotaçãoIA — Lei 14.133/2021, IN SEGES/ME 65/2021",
+    "Cotação gerada via Petrus IA — Lei 14.133/2021, IN SEGES/ME 65/2021",
     margin,
     62,
   );

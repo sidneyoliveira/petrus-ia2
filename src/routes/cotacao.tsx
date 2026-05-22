@@ -13,9 +13,9 @@ export const Route = createFileRoute("/cotacao")({
   component: CotacaoPage,
   head: () => ({
     meta: [
-      { title: "Minha cotação · CotaçãoIA" },
+      { title: "Minha cotação · Petrus IA" },
       { name: "description", content: "Monte sua Nota Técnica de preços a partir de itens selecionados de múltiplas fontes." },
-      { property: "og:title", content: "Minha cotação · CotaçãoIA" },
+      { property: "og:title", content: "Minha cotação · Petrus IA" },
       { property: "og:description", content: "Monte sua Nota Técnica de preços a partir de itens selecionados de múltiplas fontes." },
     ],
   }),

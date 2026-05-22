@@ -10,7 +10,7 @@ export const Route = createFileRoute("/login")({
   component: LoginPage,
   head: () => ({
     meta: [
-      { title: "Entrar · CotaçãoIA" },
+      { title: "Entrar · Petrus IA" },
       { name: "robots", content: "noindex,nofollow" },
     ],
   }),

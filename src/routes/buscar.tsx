@@ -26,9 +26,9 @@ export const Route = createFileRoute("/buscar")({
   validateSearch: (s) => SearchSchema.parse(s),
   head: () => ({
     meta: [
-      { title: "Pesquisar preços · CotaçãoIA" },
+      { title: "Pesquisar preços · Petrus IA" },
       { name: "description", content: "Pesquisa semântica de preços em fontes oficiais com ranqueamento por compatibilidade técnica e jurídica." },
-      { property: "og:title", content: "Pesquisar preços · CotaçãoIA" },
+      { property: "og:title", content: "Pesquisar preços · Petrus IA" },
       { property: "og:description", content: "Pesquisa semântica de preços em fontes oficiais com ranqueamento por compatibilidade técnica e jurídica." },
       { property: "og:url", content: "https://petrus-ia.lovable.app/buscar" },
     ],
