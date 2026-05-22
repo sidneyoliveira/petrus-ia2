@@ -29,7 +29,8 @@ export interface ExtractCompraData {
 export type EventName =
   | "crawler/backfill.start"
   | "crawler/discover.window"
-  | "crawler/extract.compra";
+  | "crawler/extract.compra"
+  | "crawler/m2a.discover";
 
 export const inngest = new Inngest({ id: "petrus-ia" });
 
