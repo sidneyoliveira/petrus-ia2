@@ -1005,7 +1005,6 @@ export async function fetchTransparencia(query: string): Promise<RawItem[]> {
 // Se nenhuma responder (rede/geo-block), devolve [] silenciosamente.
 export const TCE_CE_HOSTS = [
   "https://api-dados-abertos.tce.ce.gov.br/sim",
-  "https://api.tce.ce.gov.br/index.php/sim/1_0",
 ];
 export const TCE_CE_VIEWS = ["queryView_dv_itens_licitados", "queryView_dv_contratados"];
 
@@ -1049,41 +1048,53 @@ export function numFromBR(v: unknown): number | undefined {
 }
 
 export async function fetchTceCeView(host: string, view: string, query: string): Promise<TCECERow[]> {
-  // Parametros heurísticos: tentamos `descricao_item` como filtro de texto.
-  // Algumas instâncias usam `q` ou `objeto` — incluímos os dois.
-  const params = new URLSearchParams({
-    descricao_item: query,
-    objeto: query,
-    q: query,
-    limit: "30",
-  });
+  // A API de Dados Abertos do TCE-CE segue o estilo OData v2 (mesmo padrão
+  // do endpoint público /sim/municipios?$format=json&$count=...).
+  // Para filtrar por texto usamos `$filter=substringof('<termo>',descricao_item)`.
+  // Caso o filtro seja rejeitado, fazemos um fallback sem filtro e tratamos
+  // a filtragem por keyword localmente no fetchTCECE.
+  const safe = query.replace(/'/g, "''");
+  const filterField = view.includes("itens") ? "descricao_item" : "objeto";
+  const params = new URLSearchParams();
+  params.set("$format", "json");
+  params.set("$count", "60");
+  params.set("$start_index", "0");
+  params.set("$filter", `substringof('${safe}',${filterField})`);
   const url = `${host}/${view}?${params.toString()}`;
   const ctrl = new AbortController();
-  // TCE-CE costuma ficar indisponível (geo-block / hosts fora do ar).
-  // Timeout agressivo para não atrasar o restante do pipeline.
-  const timer = setTimeout(() => ctrl.abort(), 4_000);
+  // O host responde em ~1-3s quando alcançável (testado via navegador do
+  // usuário). Damos 8s para tolerar congestionamento do gateway do TCE.
+  const timer = setTimeout(() => ctrl.abort(), 8_000);
+  const t0 = Date.now();
   try {
     const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+      headers: { Accept: "application/json", "User-Agent": PNCP_UA },
       signal: ctrl.signal,
     });
     if (!res.ok) {
-      console.warn(`[tce-ce] ${view} HTTP ${res.status} em ${host}`);
+      console.warn(`[tce-ce] ${view} HTTP ${res.status} em ${host} (${Date.now() - t0}ms)`);
       return [];
     }
     const j = (await res.json().catch(() => null)) as unknown;
-    if (Array.isArray(j)) return j as TCECERow[];
-    if (j && typeof j === "object") {
+    let rows: TCECERow[] = [];
+    if (Array.isArray(j)) rows = j as TCECERow[];
+    else if (j && typeof j === "object") {
       const obj = j as Record<string, unknown>;
-      for (const key of ["data", "items", "resultados", "rows", "result"]) {
+      for (const key of ["data", "items", "resultados", "rows", "result", "d"]) {
         const arr = obj[key];
-        if (Array.isArray(arr)) return arr as TCECERow[];
+        if (Array.isArray(arr)) { rows = arr as TCECERow[]; break; }
+        // OData wrapper: { d: { results: [...] } }
+        if (arr && typeof arr === "object" && Array.isArray((arr as Record<string, unknown>).results)) {
+          rows = (arr as { results: TCECERow[] }).results;
+          break;
+        }
       }
     }
-    return [];
+    console.info(`[tce-ce] ${view} ok: ${rows.length} linhas em ${Date.now() - t0}ms`);
+    return rows;
   } catch (e) {
     const msg = (e as Error)?.message ?? "erro";
-    console.warn(`[tce-ce] ${view} falhou em ${host}: ${msg.slice(0, 80)}`);
+    console.warn(`[tce-ce] ${view} falhou em ${host} após ${Date.now() - t0}ms: ${msg.slice(0, 80)}`);
     return [];
   } finally {
     clearTimeout(timer);
