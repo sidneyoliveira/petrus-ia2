@@ -2023,7 +2023,7 @@ function isGranularItemResult(r: PriceResult): boolean {
 }
 
 function summarizeSources(results: PriceResult[], catalog: { domain: string; name: string }[]): SearchSourceStatus[] {
-  const base = ["PNCP", "Compras.gov.br", "TCE-CE", "Anexos (PDF/HTML)", ...catalog.slice(0, 8).map((s) => s.name)];
+  const base = ["PNCP", "Compras.gov.br", "TCE-CE", "Portal de Compras Públicas", "Anexos (PDF/HTML)", ...catalog.slice(0, 8).map((s) => s.name)];
   const map = new Map<string, SearchSourceStatus>();
   for (const name of base) {
     if (!name) continue;
