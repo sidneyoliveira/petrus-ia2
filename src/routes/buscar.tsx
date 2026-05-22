@@ -710,6 +710,9 @@ function LiveSourceMonitor({
   const done = sources.length;
   const total = totalSources || done + inflight.length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  // Lista de fontes começa COLAPSADA: o usuário pediu para não ocupar
+  // espaço por padrão. Abre via botão "Mostrar detalhes".
+  const [open, setOpen] = useState(false);
   return (
     <div className="mt-3 rounded-md border border-border bg-card p-2.5 text-[11px]">
       <div className="flex items-center justify-between mb-2">
@@ -725,8 +728,17 @@ function LiveSourceMonitor({
             </span>
           )}
         </span>
-        <span className="text-[10px] text-muted-foreground/70">veja detalhes no console (F12)</span>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-secondary transition-smooth"
+          aria-expanded={open}
+        >
+          {open ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {open ? "Ocultar fontes" : `Mostrar fontes (${done}${inflight.length ? `+${inflight.length}` : ""})`}
+        </button>
       </div>
+      {open && (
       <div className="flex flex-wrap gap-1.5">
         {inflight.map((s) => (
           <span
@@ -758,6 +770,7 @@ function LiveSourceMonitor({
           );
         })}
       </div>
+      )}
     </div>
   );
 }
