@@ -15,6 +15,7 @@ import {
   type PncpResultadoRaw,
 } from "../crawler/pncp-client.server";
 import { normalizePncpItem, upsertCrawledItems } from "../crawler/golden-schema";
+import { fetchM2aListing, fetchM2aPncpRef } from "../crawler/m2a-client.server";
 
 function fmtYYYYMMDD(d: Date): string {
   return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}`;
