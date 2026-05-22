@@ -1,4 +1,4 @@
-import { Award, Building2, Calendar, MapPin, Tag, ExternalLink, Bookmark, ThumbsUp, ThumbsDown, AlertTriangle, CheckCircle2, AlertCircle, HelpCircle } from "lucide-react";
+import { Award, Building2, Calendar, MapPin, Tag, ExternalLink, Bookmark, ThumbsUp, ThumbsDown, AlertTriangle, CheckCircle2, AlertCircle, HelpCircle, Database } from "lucide-react";
 import type { PriceResult } from "@/lib/types";
 import { useServerFn } from "@tanstack/react-start";
 import { submitFeedback } from "@/lib/feedback.functions";
@@ -92,6 +92,11 @@ export function ResultCard({ item, onOpen, onSave, saved, query }: Props) {
               <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-primary">
                 {item.origem}
               </span>
+              {item.fromLocalDb && (
+                <span title="Resultado recuperado do banco de dados do sistema enquanto a busca ao vivo atualiza as fontes" className="inline-flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-secondary-foreground">
+                  <Database className="h-3 w-3" /> Banco do sistema
+                </span>
+              )}
               {item.documento && item.documento !== "outro" && (
                 <span className="inline-flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-secondary-foreground">
                   {item.documento}
