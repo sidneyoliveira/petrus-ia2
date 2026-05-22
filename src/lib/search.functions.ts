@@ -14,6 +14,54 @@ import { searchComprasGovByKeyword, type ComprasGovUnified } from "./compras-gov
 const asJson = <T,>(v: T): Json => v as unknown as Json;
 
 // ============================================================
+// PNCP HTTP helper — User-Agent profissional + exp-backoff em 429/5xx
+// ============================================================
+// A API do PNCP é instável sob carga (429/502/503/504 frequentes).
+// Centraliza headers, timeout e retry para todas as chamadas PNCP.
+const PNCP_UA = "Petrus-IA-DataEngine/1.0 (+cotacao)";
+
+async function pncpFetchJson<T>(
+  url: string,
+  opts: { timeoutMs?: number; attempts?: number } = {},
+): Promise<T | null> {
+  const attempts = opts.attempts ?? 3;
+  const timeoutMs = opts.timeoutMs ?? 12_000;
+  let delay = 700;
+  for (let i = 0; i < attempts; i++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        headers: { Accept: "application/json", "User-Agent": PNCP_UA },
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      // Retry em 429 e 5xx (com backoff exponencial + jitter leve)
+      if (res.status === 429 || (res.status >= 500 && res.status <= 599)) {
+        if (i === attempts - 1) {
+          console.warn(`[pncp] giving up url=${url.slice(0, 120)} status=${res.status}`);
+          return null;
+        }
+        await new Promise((r) => setTimeout(r, delay + Math.floor(Math.random() * 250)));
+        delay *= 2;
+        continue;
+      }
+      if (!res.ok) return null;
+      return (await res.json()) as T;
+    } catch (e) {
+      clearTimeout(timer);
+      if (i === attempts - 1) {
+        console.warn(`[pncp] fetch err url=${url.slice(0, 120)} err=${(e as Error).message}`);
+        return null;
+      }
+      await new Promise((r) => setTimeout(r, delay + Math.floor(Math.random() * 250)));
+      delay *= 2;
+    }
+  }
+  return null;
+}
+
+// ============================================================
 // CACHE — quote_searches + quote_items
 // ============================================================
 // Janela de frescor padrão: 24h. Resultados mais novos são servidos do cache
