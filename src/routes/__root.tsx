@@ -153,7 +153,16 @@ function AuthSync() {
   const router = useRouter();
   const qc = useQueryClient();
   useEffect(() => {
-    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+    // Só invalida em mudanças REAIS de sessão. TOKEN_REFRESHED e
+    // INITIAL_SESSION disparam quando a aba volta a ficar visível e
+    // causariam refetch de tudo (ex.: trocar a lista de resultados em
+    // /buscar sem o usuário pedir).
+    let lastUserId: string | null | undefined;
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
+      const uid = s?.user?.id ?? null;
+      if (event === "TOKEN_REFRESHED" || event === "INITIAL_SESSION") return;
+      if (uid === lastUserId) return;
+      lastUserId = uid;
       router.invalidate();
       qc.invalidateQueries();
     });
