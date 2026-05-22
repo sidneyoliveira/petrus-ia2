@@ -53,8 +53,8 @@ export const backfillStart = inngest.createFunction(
         events.push({ name: "crawler/discover.window", data: { dataInicial: ymd, dataFinal: ymd, modalidade: mod } });
       }
     }
-    // Trava de custo: limite hard de 2000 janelas para não estourar o free tier do Inngest (50k execuções/mês).
-    const MAX_WINDOWS = 2000;
+    // Trava de custo: 1000 janelas máx por backfill (free tier = 50k runs/mês).
+    const MAX_WINDOWS = 1000;
     const capped = events.slice(0, MAX_WINDOWS);
     await step.run("fanout-gateway", () =>
       sendBatch("crawler/discover.window", capped.map((e) => e.data)),
@@ -67,6 +67,8 @@ export const discoverWindow = inngest.createFunction(
   {
     id: "crawler-discover-window",
     concurrency: { limit: 2 },
+    throttle: { limit: 300, period: "1h" },
+    idempotency: "event.data.dataInicial + '-' + event.data.modalidade",
     retries: 3,
     triggers: [
       { event: "crawler/discover.window" },
@@ -113,6 +115,8 @@ export const extractCompra = inngest.createFunction(
   {
     id: "crawler-extract-compra",
     concurrency: { limit: 4 },
+    throttle: { limit: 500, period: "1h" },
+    idempotency: "event.data.cnpj + '-' + event.data.ano + '-' + event.data.sequencial",
     retries: 2,
     triggers: [{ event: "crawler/extract.compra" }],
   },
