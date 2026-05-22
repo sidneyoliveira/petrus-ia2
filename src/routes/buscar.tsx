@@ -179,7 +179,7 @@ function Buscar() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCached, q, mode, parsedKeywords.join("|")]);
+  }, [isCached, q, tema, mode, parsedKeywords.join("|")]);
 
   const filtered = useMemo(() => {
     // Merge: resultados do banco local + remotos, dedupe por id, banco vai
