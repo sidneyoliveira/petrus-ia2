@@ -162,6 +162,13 @@ function Buscar() {
       return true;
     });
 
+    // Fallback: se os filtros zeraram a lista mas há resultados brutos,
+    // mostra todos eles (ordenados por score). O usuário nunca deve ficar
+    // com a tela vazia quando o servidor retornou algo.
+    if (arr.length === 0 && data.results.length > 0) {
+      arr = [...data.results];
+    }
+
     // Ordenação configurável
     const withValor = arr.filter((r) => typeof r.valor === "number") as (PriceResult & { valor: number })[];
     const media = withValor.length
