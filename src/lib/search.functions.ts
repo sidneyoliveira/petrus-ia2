@@ -542,23 +542,16 @@ async function fetchPncpItens(
   const all: PncpItemRaw[] = [];
   for (let pagina = 1; pagina <= 5; pagina++) {
     const url = `https://pncp.gov.br/pncp-api/v1/orgaos/${cnpj}/compras/${ano}/${seq}/itens?pagina=${pagina}&tamanhoPagina=100`;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 12_000);
-    try {
-      const res = await fetch(url, {
-        headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
-        signal: ctrl.signal,
-      });
-      if (!res.ok) break;
-      const j = (await res.json()) as PncpItemRaw[] | { data?: PncpItemRaw[] };
-      const page = Array.isArray(j) ? j : (j.data ?? []);
-      all.push(...page);
-      if (page.length < 100) break;
-    } catch {
-      break;
-    } finally {
-      clearTimeout(timer);
-    }
+    const j = await pncpFetchJson<
+      PncpItemRaw[] | { data?: PncpItemRaw[]; totalPaginas?: number; totalRegistros?: number }
+    >(url);
+    if (!j) break;
+    const page = Array.isArray(j) ? j : (j.data ?? []);
+    all.push(...page);
+    // Respeita totalPaginas do PNCP quando disponível; senão usa heurística por tamanho.
+    const totalPaginas = !Array.isArray(j) ? j.totalPaginas : undefined;
+    if (typeof totalPaginas === "number" && pagina >= totalPaginas) break;
+    if (page.length < 100) break;
   }
   return all;
 }
