@@ -460,7 +460,14 @@ export const Route = createFileRoute("/api/public/search/stream")({
 
               // 4) enrich /itens (custoso mas faz toda a diferença para granularidade)
               safeEnqueue("phase", { name: "enriquecendo itens do PNCP" });
-              const enriched = await enrichWithPNCPItems(accRaw, filters.query, 250);
+              const enriched = await enrichWithPNCPItems(accRaw, filters.query, 120, async (partial) => {
+                safeEnqueue("snapshot", {
+                  items: lightRank(partial, filters).slice(0, 200),
+                  total: partial.length,
+                  sourcesDone: sourcesDone.length,
+                  totalSources: tasks.length,
+                });
+              });
               safeEnqueue("snapshot", {
                 items: lightRank(enriched, filters).slice(0, 200),
                 total: enriched.length,
