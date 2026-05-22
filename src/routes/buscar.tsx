@@ -130,8 +130,7 @@ function Buscar() {
   );
 
   // Shape compatível com o restante do componente (que esperava o retorno
-  // do useQuery anterior). Assim mantemos as referências a `data`, `isFetching`,
-  // `error`, `refetch` sem reescrever toda a JSX.
+  // do useQuery anterior).
   const data = useMemo(() => {
     if (stream.items.length === 0 && !stream.done) return undefined;
     return {
@@ -148,7 +147,6 @@ function Buscar() {
   }, [stream.items, stream.done, stream.tookMs, stream.finalSources, stream.fromCache, stream.final?.cachedAt, q]);
   const isFetching = !stream.done && q.trim().length >= 2;
   const error = stream.error;
-  const refetch = stream.refetch;
 
   // DB-first: busca instantânea no banco local (zero créditos) em paralelo
   // com a busca remota. Resultados aparecem no topo enquanto a remota carrega.
