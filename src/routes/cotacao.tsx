@@ -1,10 +1,13 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo } from "react";
-import { Trash2, ShoppingBasket, ExternalLink, FileSpreadsheet, FileText } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
+import { Trash2, ShoppingBasket, ExternalLink, FileSpreadsheet, FileText, Cloud, Loader2 } from "lucide-react";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
-import { useBasket } from "@/lib/basket";
+import { useBasket, getActiveBasketId, setActiveBasketId } from "@/lib/basket";
 import { exportCotacaoPdf } from "@/lib/export-pdf";
+import { saveBasket } from "@/lib/baskets.functions";
+import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/cotacao")({
   component: CotacaoPage,
@@ -25,6 +28,28 @@ function brl(v?: number | null) {
 
 function CotacaoPage() {
   const { items, remove, setQuantidade, clear } = useBasket();
+  const auth = useAuth();
+  const callSave = useServerFn(saveBasket);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+
+  async function saveToCloud() {
+    if (!auth.isAuthenticated || items.length === 0) return;
+    setSaving(true);
+    try {
+      const id = getActiveBasketId() ?? undefined;
+      const name = `Cesta de ${new Date().toLocaleString("pt-BR")}`;
+      const row = await callSave({
+        data: { id, name, items: items as never },
+      });
+      if (row?.id) setActiveBasketId(row.id);
+      setSavedAt(new Date().toLocaleTimeString("pt-BR"));
+    } catch (e) {
+      alert("Não foi possível salvar: " + (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const totals = useMemo(() => {
     let totalGeral = 0;
@@ -133,6 +158,33 @@ function CotacaoPage() {
               </div>
               {items.length > 0 && (
                 <div className="flex items-center gap-2">
+                  {auth.isAuthenticated ? (
+                    <>
+                      <button
+                        onClick={saveToCloud}
+                        disabled={saving}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs text-accent hover:bg-accent/20 disabled:opacity-50"
+                        title="Salvar cesta na nuvem"
+                      >
+                        {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
+                        {savedAt ? `Salvo ${savedAt}` : "Salvar na nuvem"}
+                      </button>
+                      <Link
+                        to="/cestas"
+                        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs hover:bg-secondary"
+                      >
+                        Minhas cestas
+                      </Link>
+                    </>
+                  ) : (
+                    <Link
+                      to="/login"
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs hover:bg-secondary"
+                      title="Entre pra salvar suas cestas"
+                    >
+                      <Cloud className="h-3.5 w-3.5" /> Entrar pra salvar
+                    </Link>
+                  )}
                   <button
                     onClick={exportPDF}
                     className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground hover:opacity-90 transition-smooth"
