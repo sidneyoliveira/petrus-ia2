@@ -1895,20 +1895,21 @@ export function buildPncpUrl(raw: RawItem): string | undefined {
     const u = (raw.url as string | undefined) || (raw.item_url as string | undefined);
     return u && /^https?:\/\//i.test(u) ? u : undefined;
   }
-  const tipo = (raw.tipo_documento ?? "").toLowerCase();
+  // Usuário pediu: sempre apontar para o EDITAL canônico no PNCP — nunca
+  // para a página de ata, contrato ou empenho. Reescreve qualquer path que
+  // venha como /atas/... ou /contratos/... para /editais/... usando os
+  // mesmos {cnpj}/{ano}/{seq} (mesma compra mãe).
+  const rewriteToEdital = (p: string): string => {
+    return p.replace(/\/(?:app\/)?(?:atas|contratos|empenhos|compras)\//i, "/app/editais/");
+  };
   const path = (raw.item_url as string | undefined) || (raw.url as string | undefined);
-  if (path && /^https?:\/\//i.test(path)) return path;
-  if (path && path.startsWith("/")) return `https://pncp.gov.br/app${path}`;
+  if (path && /^https?:\/\//i.test(path)) return rewriteToEdital(path);
+  if (path && path.startsWith("/")) return rewriteToEdital(`https://pncp.gov.br/app${path}`);
   const cnpj = (raw.orgao_cnpj ?? "").replace(/\D/g, "");
   const ano = raw.ano ? String(raw.ano) : "";
   const seq = raw.numero ? String(raw.numero).replace(/\D/g, "") : "";
   if (cnpj && ano && seq) {
-    const seg = tipo.includes("ata")
-      ? "atas"
-      : tipo.includes("contrato")
-        ? "contratos"
-        : "editais";
-    return `https://pncp.gov.br/app/${seg}/${cnpj}/${ano}/${seq}`;
+    return `https://pncp.gov.br/app/editais/${cnpj}/${ano}/${seq}`;
   }
   return undefined;
 }
