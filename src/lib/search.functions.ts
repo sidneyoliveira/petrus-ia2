@@ -83,7 +83,7 @@ function normalizeQueryNorm(s: string): string {
 function filtersHash(d: {
   uf?: string; modalidade?: string; unidade?: string;
   apenasHomologados?: boolean; valorMin?: number; valorMax?: number;
-  mode?: string; keywords?: string[]; pagina?: number;
+  mode?: string; keywords?: string[]; pagina?: number; tema?: string;
 }): string {
   return JSON.stringify({
     uf: d.uf ?? null,
@@ -95,6 +95,7 @@ function filtersHash(d: {
     mode: d.mode ?? "semantic",
     keywords: (d.keywords ?? []).slice().sort(),
     pagina: d.pagina ?? 1,
+    tema: d.tema ?? null,
   });
 }
 
