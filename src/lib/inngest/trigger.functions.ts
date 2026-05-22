@@ -18,3 +18,23 @@ export const triggerBackfill = createServerFn({ method: "POST" })
     await sendInngestEvent("crawler/backfill.start", { days: data.days });
     return { ok: true, dispatched: true, days: data.days };
   });
+
+const M2aSchema = z.object({
+  terms: z.array(z.string().min(1).max(120)).min(1).max(20),
+  situacao: z.number().int().min(0).max(20).optional(),
+  maxPages: z.number().int().min(1).max(10).optional(),
+});
+
+export const triggerM2aDiscover = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => M2aSchema.parse(input ?? {}))
+  .handler(async ({ data }) => {
+    for (const term of data.terms) {
+      await sendInngestEvent("crawler/m2a.discover", {
+        search: term,
+        situacao: data.situacao ?? 7,
+        maxPages: data.maxPages ?? 3,
+      });
+    }
+    return { ok: true, dispatched: data.terms.length };
+  });
