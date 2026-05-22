@@ -518,6 +518,56 @@ async function fetchPNCP(query: string, pagina: number, tamanho = 50): Promise<R
   return data.items ?? data.resultados ?? [];
 }
 
+/**
+ * Discovery via portal compras.m2atecnologia.com.br.
+ * Pagina a listagem (situacao=7 = finalizadas) pelo termo, abre cada processo
+ * em paralelo, extrai a URL canônica do PNCP e devolve RawItem stubs com
+ * `url` PNCP — o `enrichWithPNCPItems` se encarrega de expandir em itens
+ * granulares com valor unitário homologado.
+ *
+ * Custo controlado: 1 página × até `cap` processos × 1 GET cada.
+ * Default cap=15 para inline (search ao vivo). Crawler em background usa 60.
+ */
+async function fetchM2A(searchTerm: string, cap = 15): Promise<RawItem[]> {
+  const term = searchTerm.trim();
+  if (term.length < 2) return [];
+  let listing: { id: string; slug: string; url: string }[] = [];
+  try {
+    listing = await fetchM2aListing({ search: term, situacao: 7, page: 1 });
+  } catch (e) {
+    console.warn(`[m2a] listing err term="${term}" err=${(e as Error).message}`);
+    return [];
+  }
+  if (listing.length === 0) return [];
+  const capped = listing.slice(0, cap);
+
+  const out: RawItem[] = [];
+  const CONC = 5;
+  for (let i = 0; i < capped.length; i += CONC) {
+    const chunk = capped.slice(i, i + CONC);
+    const settled = await Promise.allSettled(chunk.map((p) => fetchM2aPncpRef(p.url)));
+    settled.forEach((s, idx) => {
+      if (s.status !== "fulfilled" || !s.value) return;
+      const ref = s.value;
+      const objeto = capped[idx].slug.replace(/-/g, " ").slice(0, 200);
+      out.push({
+        id: `m2a-${ref.cnpj}-${ref.ano}-${ref.sequencial}`,
+        numero: ref.sequencial,
+        ano: ref.ano,
+        orgao_cnpj: ref.cnpj,
+        title: objeto,
+        objeto_compra: objeto,
+        url: ref.url,
+        item_url: ref.url,
+        situacao: "Finalizada",
+        _sourceDomain: "compras.m2atecnologia.com.br",
+        _sourceName: "M2A Tecnologia",
+      });
+    });
+  }
+  return out;
+}
+
 // PNCP API de consulta — retorna ITENS individuais de uma contratação/ata/contrato,
 // cada um com valor UNITÁRIO (estimado e/ou homologado), unidade e quantidade.
 // Isto resolve o problema do "valor global do processo" aparecer como cotação.
