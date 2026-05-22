@@ -59,6 +59,12 @@ export interface PriceResult {
   valorTotalCalculado?: number | null;
   /** Divergência relativa |total - calc|/total (0..1). */
   mathDeltaPct?: number | null;
+  /** Valor unitário efetivamente contratado (extraído de ata/contrato). */
+  valorContratado?: number | null;
+  /** Fonte do valor contratado, se houver. */
+  valorContratadoFonte?: "ata" | "contrato" | "homologacao" | null;
+  /** Status da tentativa de descobrir o valor contratado. */
+  contractFetchStatus?: "pending" | "ok" | "fail" | "na";
 }
 
 export interface SearchFilters {
