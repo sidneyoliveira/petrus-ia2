@@ -10,6 +10,7 @@ import { healValuesBackground } from "./heal/value-healer.server";
 import { embedQuoteItemsBackground } from "./embed/embedder.server";
 import { classifyTriad } from "./extract/triad";
 import { searchComprasGovByKeyword, type ComprasGovUnified } from "./compras-gov.server";
+import { fetchM2aListing, fetchM2aPncpRef } from "./crawler/m2a-client.server";
 
 const asJson = <T,>(v: T): Json => v as unknown as Json;
 
@@ -82,7 +83,7 @@ function normalizeQueryNorm(s: string): string {
 function filtersHash(d: {
   uf?: string; modalidade?: string; unidade?: string;
   apenasHomologados?: boolean; valorMin?: number; valorMax?: number;
-  mode?: string; keywords?: string[]; pagina?: number;
+  mode?: string; keywords?: string[]; pagina?: number; tema?: string;
 }): string {
   return JSON.stringify({
     uf: d.uf ?? null,
@@ -94,6 +95,7 @@ function filtersHash(d: {
     mode: d.mode ?? "semantic",
     keywords: (d.keywords ?? []).slice().sort(),
     pagina: d.pagina ?? 1,
+    tema: d.tema ?? null,
   });
 }
 
@@ -234,6 +236,13 @@ async function writeCachedSearch(opts: {
 
 const FilterSchema = z.object({
   query: z.string().trim().min(1).max(200),
+  /**
+   * Tema/título da licitação (opcional). Usado pra descoberta de processos
+   * em portais que indexam por objeto (ex.: M2A). Ex.: query="caderno" +
+   * tema="material escolar" amplia o universo de processos descobertos sem
+   * perder precisão nos itens (filtrados pela query depois).
+   */
+  tema: z.string().trim().min(1).max(120).optional(),
   uf: z.string().optional(),
   modalidade: z.string().optional(),
   unidade: z.string().optional(),
@@ -507,6 +516,56 @@ async function fetchPNCP(query: string, pagina: number, tamanho = 50): Promise<R
   });
   if (!data) return [];
   return data.items ?? data.resultados ?? [];
+}
+
+/**
+ * Discovery via portal compras.m2atecnologia.com.br.
+ * Pagina a listagem (situacao=7 = finalizadas) pelo termo, abre cada processo
+ * em paralelo, extrai a URL canônica do PNCP e devolve RawItem stubs com
+ * `url` PNCP — o `enrichWithPNCPItems` se encarrega de expandir em itens
+ * granulares com valor unitário homologado.
+ *
+ * Custo controlado: 1 página × até `cap` processos × 1 GET cada.
+ * Default cap=15 para inline (search ao vivo). Crawler em background usa 60.
+ */
+async function fetchM2A(searchTerm: string, cap = 15): Promise<RawItem[]> {
+  const term = searchTerm.trim();
+  if (term.length < 2) return [];
+  let listing: { id: string; slug: string; url: string }[] = [];
+  try {
+    listing = await fetchM2aListing({ search: term, situacao: 7, page: 1 });
+  } catch (e) {
+    console.warn(`[m2a] listing err term="${term}" err=${(e as Error).message}`);
+    return [];
+  }
+  if (listing.length === 0) return [];
+  const capped = listing.slice(0, cap);
+
+  const out: RawItem[] = [];
+  const CONC = 5;
+  for (let i = 0; i < capped.length; i += CONC) {
+    const chunk = capped.slice(i, i + CONC);
+    const settled = await Promise.allSettled(chunk.map((p) => fetchM2aPncpRef(p.url)));
+    settled.forEach((s, idx) => {
+      if (s.status !== "fulfilled" || !s.value) return;
+      const ref = s.value;
+      const objeto = capped[idx].slug.replace(/-/g, " ").slice(0, 200);
+      out.push({
+        id: `m2a-${ref.cnpj}-${ref.ano}-${ref.sequencial}`,
+        numero: ref.sequencial,
+        ano: ref.ano,
+        orgao_cnpj: ref.cnpj,
+        title: objeto,
+        objeto_compra: objeto,
+        url: ref.url,
+        item_url: ref.url,
+        situacao: "Finalizada",
+        _sourceDomain: "compras.m2atecnologia.com.br",
+        _sourceName: "M2A Tecnologia",
+      });
+    });
+  }
+  return out;
 }
 
 // PNCP API de consulta — retorna ITENS individuais de uma contratação/ata/contrato,
@@ -2005,6 +2064,18 @@ export const searchPrices = createServerFn({ method: "POST" })
     // de processo via Firecrawl-search com site: e extrai itens (tríade) via
     // scrapeAndMine. Cobre licitações municipais ausentes do PNCP.
     tasks.push(minePortais(data.query));
+    // Rodada F — M2A Tecnologia: portal que indexa licitações por OBJETO/TEMA.
+    // Quando o usuário informa `tema` (ex.: "material escolar"), descobre
+    // processos relevantes ali e o enrich /itens filtra pelos itens que
+    // batem com a `query` específica (ex.: "caderno"). Sem `tema`, usa a
+    // própria query como termo de busca.
+    const m2aTerm = (data.tema && data.tema.length >= 2) ? data.tema : data.query;
+    tasks.push(fetchM2A(m2aTerm, 15));
+    if (data.tema && data.tema !== data.query) {
+      // Quando há tema, faz uma segunda passada com a query específica
+      // para cobrir processos que mencionam o item exato no título.
+      tasks.push(fetchM2A(data.query, 10));
+    }
     const settled = await Promise.allSettled(tasks);
     let raw = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
 
