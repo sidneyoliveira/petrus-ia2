@@ -150,4 +150,77 @@ export const extractCompra = inngest.createFunction(
   },
 );
 
-export const allFunctions = [backfillStart, discoverWindow, extractCompra];
+/**
+ * Discovery via m2atecnologia: pagina a listagem do portal por termo,
+ * extrai a página de cada processo, descobre a URL PNCP canônica e
+ * enfileira `crawler/extract.compra` (mesma pipeline do PNCP direto).
+ *
+ * Volume controlado: MAX_PAGES_PER_TERM × ~20 itens/página + 1 GET por
+ * processo. Default 3 páginas × 1 termo = ~60 extracts. Cabe no free tier.
+ */
+export const m2aDiscover = inngest.createFunction(
+  {
+    id: "crawler-m2a-discover",
+    concurrency: { limit: 2 },
+    retries: 2,
+    triggers: [{ event: "crawler/m2a.discover" }],
+  },
+  async ({ event, step }) => {
+    const data = (event.data ?? {}) as { search?: string; situacao?: number; maxPages?: number };
+    const search = (data.search ?? "").trim();
+    if (!search) return { skipped: true, reason: "search vazio" };
+    const situacao = data.situacao ?? 7; // finalizado
+    const MAX_PAGES = Math.min(Math.max(Number(data.maxPages) || 3, 1), 10);
+
+    const allProcesses: { id: string; slug: string; url: string }[] = [];
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const refs = await step.run(`listing-p${page}`, () =>
+        fetchM2aListing({ search, situacao, page }),
+      );
+      if (refs.length === 0) break;
+      allProcesses.push(...refs);
+      if (refs.length < 10) break; // página parcial = fim
+    }
+    if (allProcesses.length === 0) return { search, processes: 0 };
+
+    // Trava de custo: no máximo 60 processos por discover (1 GET cada).
+    const capped = allProcesses.slice(0, 60);
+
+    const pncpRefs = await step.run("resolve-pncp", async () => {
+      const out: PncpCompraRef[] = [];
+      const CONC = 5;
+      for (let i = 0; i < capped.length; i += CONC) {
+        const chunk = capped.slice(i, i + CONC);
+        const settled = await Promise.allSettled(chunk.map((p) => fetchM2aPncpRef(p.url)));
+        settled.forEach((s, idx) => {
+          if (s.status === "fulfilled" && s.value) {
+            out.push({
+              cnpj: s.value.cnpj,
+              ano: s.value.ano,
+              sequencial: s.value.sequencial,
+              url: s.value.url,
+              objetoCompra: capped[idx].slug.replace(/-/g, " "),
+            });
+          }
+        });
+      }
+      return out;
+    });
+
+    if (pncpRefs.length === 0) return { search, processes: capped.length, pncpFound: 0 };
+
+    await step.run("extract-fanout", () =>
+      sendBatch("crawler/extract.compra", pncpRefs as unknown as Record<string, unknown>[]),
+    );
+
+    return {
+      search,
+      processes: capped.length,
+      pncpFound: pncpRefs.length,
+      dispatched: pncpRefs.length,
+      capped: capped.length < allProcesses.length,
+    };
+  },
+);
+
+export const allFunctions = [backfillStart, discoverWindow, extractCompra, m2aDiscover];
