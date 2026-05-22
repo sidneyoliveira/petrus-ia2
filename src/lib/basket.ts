@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import type { PriceResult } from "./types";
 
 const KEY = "petrus.basket.v1";
+const ACTIVE_ID_KEY = "petrus.basket.activeId";
 
 export interface BasketItem {
   item: PriceResult;
@@ -31,6 +32,24 @@ function write(items: BasketItem[]) {
   } catch {
     /* quota or private mode — ignore */
   }
+}
+
+export function getActiveBasketId(): string | null {
+  if (typeof window === "undefined") return null;
+  try { return localStorage.getItem(ACTIVE_ID_KEY); } catch { return null; }
+}
+export function setActiveBasketId(id: string | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (id) localStorage.setItem(ACTIVE_ID_KEY, id);
+    else localStorage.removeItem(ACTIVE_ID_KEY);
+    window.dispatchEvent(new CustomEvent("petrus:basket:changed"));
+  } catch { /* ignore */ }
+}
+
+/** Substitui o conteúdo local da cesta (usado quando carrega da nuvem). */
+export function replaceBasketItems(items: BasketItem[]) {
+  write(items);
 }
 
 export function useBasket() {
