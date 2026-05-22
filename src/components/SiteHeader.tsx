@@ -21,7 +21,7 @@ export function SiteHeader() {
         </Link>
         <nav className="hidden md:flex items-center gap-1 text-sm text-muted-foreground">
           <Link to="/" className="px-3 py-1.5 rounded-md hover:text-foreground transition-smooth" activeProps={{ className: "text-foreground" }}>Início</Link>
-          <Link to="/buscar" className="px-3 py-1.5 rounded-md hover:text-foreground transition-smooth" activeProps={{ className: "text-foreground" }}>Pesquisar</Link>
+          <Link to="/buscar" search={{ q: "" }} className="px-3 py-1.5 rounded-md hover:text-foreground transition-smooth" activeProps={{ className: "text-foreground" }}>Pesquisar</Link>
           <Link to="/cotacao" className="px-3 py-1.5 rounded-md hover:text-foreground transition-smooth inline-flex items-center gap-1.5" activeProps={{ className: "text-foreground" }}>
             <ShoppingBasket className="h-3.5 w-3.5" />
             Cotação
@@ -36,6 +36,7 @@ export function SiteHeader() {
         <div className="flex items-center gap-2">
           <Link
             to="/buscar"
+            search={{ q: "" }}
             className="hidden sm:inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-smooth hover:opacity-90"
           >
             <Search className="h-3.5 w-3.5" />

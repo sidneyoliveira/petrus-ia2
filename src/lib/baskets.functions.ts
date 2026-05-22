@@ -52,7 +52,7 @@ export const saveBasket = createServerFn({ method: "POST" })
     const payload = {
       user_id: context.userId,
       name: data.name,
-      items: data.items as unknown as object,
+      items: data.items as unknown as never,
       updated_at: new Date().toISOString(),
     };
     if (data.id) {
