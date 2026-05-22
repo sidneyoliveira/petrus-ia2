@@ -717,7 +717,12 @@ export async function fetchPncpItemResultado(
  *
  * Limitado aos top-N por custo. Resultados sem cnpj/ano/sequencial ficam como estão.
  */
-export async function enrichWithPNCPItems(raw: RawItem[], query: string, limit = 12): Promise<RawItem[]> {
+export async function enrichWithPNCPItems(
+  raw: RawItem[],
+  query: string,
+  limit = 12,
+  onProgress?: (items: RawItem[]) => void | Promise<void>,
+): Promise<RawItem[]> {
   const qLower = query.toLowerCase();
   const qTokens = qLower.split(/\s+/).filter((t) => t.length > 2);
   const enrichable: RawItem[] = [];
@@ -756,10 +761,139 @@ export async function enrichWithPNCPItems(raw: RawItem[], query: string, limit =
   );
   const t0Total = Date.now();
 
+  const expanded: RawItem[] = [];
+  const parentsFallback: RawItem[] = [];
+  let resultsFetched = 0;
+
+  const keptPassthrough = passthrough.map((r) => ({
+    ...r,
+    _valorTipo:
+      (r._valorTipo ??
+        (typeof r.valor_unitario_homologado === "number"
+          ? "unitario_homologado"
+          : typeof r.valor_unitario_estimado === "number" || typeof r.valor_unitario === "number"
+            ? "unitario_estimado"
+            : "desconhecido")) as PriceResult["valorTipo"],
+  }));
+
+  const emitProgress = async () => {
+    if (!onProgress) return;
+    await onProgress([...expanded, ...parentsFallback, ...keptPassthrough]);
+  };
+
+  const processFetched = async (settled: PromiseSettledResult<{ parent: RawItem; items: PncpItemRaw[] }>[]) => {
+    for (const s of settled) {
+      if (s.status !== "fulfilled") continue;
+      const { parent, items } = s.value;
+      const isM2A = parent._source === "M2A";
+      if (!items || items.length === 0) {
+        // Resultado oficial do PNCP sem itens individuais não deve virar card:
+        // o usuário pediu lista de ITENS, não lista de processos/atas/editais.
+        // M2A: descobre processos por TEMA — sem itens reais do PNCP, descarta
+        // (nunca mostrar o objeto da contratação como se fosse o item).
+        if (isM2A) continue;
+        if (parent._source === "Outro" || parent._supplier) parentsFallback.push(parent);
+        continue;
+      }
+      // Filtra itens cuja descrição tem ao menos 1 token da consulta
+      const relevant = items.filter((it) => {
+        const d = (it.descricao ?? "").toLowerCase();
+        if (!d) return false;
+        if (qTokens.length === 0) return true;
+        return qTokens.some((t) => d.includes(t));
+      });
+      // Se nenhum item bater com a query, NÃO descarta: pega os itens com
+      // valor unitário mesmo assim (podem ser variantes/sinônimos) e marca
+      // como fallback de menor prioridade.
+      // EXCEÇÃO M2A: o portal foi consultado por TEMA amplo (ex.: "material
+      // escolar"); se nenhum item bate com a query específica (ex.: "caderno"),
+      // o processo inteiro é irrelevante — descarta.
+      if (isM2A && relevant.length === 0) continue;
+      const useItems = relevant.length > 0 ? relevant : items;
+      // Tenta enriquecer com /resultados (valor HOMOLOGADO real) para itens
+      // que ainda não trazem valorUnitarioHomologado direto na lista /itens.
+      const targetForResultados = {
+        cnpj: String(parent.orgao_cnpj ?? "").replace(/\D/g, ""),
+        ano: String(parent.ano ?? ""),
+        seq: String(parent.numero ?? "").replace(/\D/g, ""),
+      };
+      if (targetForResultados.cnpj.length === 14 && targetForResultados.ano && targetForResultados.seq) {
+        const RES_CONCURRENCY = 10;
+        const needsResultado = useItems.filter(
+          (it) => typeof it.numeroItem === "number" && !validPrice(it.valorUnitarioHomologado),
+        );
+        if (needsResultado.length > 0) {
+          console.info(
+            `[enrichPNCP] /resultados ${targetForResultados.cnpj}/${targetForResultados.ano}/${targetForResultados.seq} -> ${needsResultado.length} itens precisam de homologação`,
+          );
+        }
+        for (let i = 0; i < needsResultado.length; i += RES_CONCURRENCY) {
+          const chunk = needsResultado.slice(i, i + RES_CONCURRENCY);
+          const settledResults = await Promise.allSettled(
+            chunk.map((it) =>
+              fetchPncpItemResultado(
+                targetForResultados.cnpj,
+                targetForResultados.ano,
+                targetForResultados.seq,
+                it.numeroItem as number,
+              ).then((res) => ({ it, res })),
+            ),
+          );
+          for (const rs of settledResults) {
+            if (rs.status !== "fulfilled" || !rs.value.res) continue;
+            resultsFetched++;
+            const { it, res } = rs.value;
+            if (validPrice(res.valorUnitarioHomologado)) {
+              it.valorUnitarioHomologado = res.valorUnitarioHomologado;
+              if (validPrice(res.valorTotalHomologado)) it.valorTotalHomologado = res.valorTotalHomologado;
+              if (typeof res.quantidadeHomologada === "number" && res.quantidadeHomologada > 0)
+                it.quantidade = res.quantidadeHomologada;
+              // Vincula fornecedor vencedor ao item via parent (será propagado abaixo).
+              if (res.nomeRazaoSocialFornecedor && !parent.fornecedor) {
+                parent.fornecedor = res.nomeRazaoSocialFornecedor;
+              }
+            }
+          }
+        }
+      }
+      for (const it of useItems) {
+        const homologado = validPrice(it.valorUnitarioHomologado);
+        const estimado = validPrice(it.valorUnitarioEstimado);
+        const unit = homologado ?? estimado;
+        const tipoVal: PriceResult["valorTipo"] = homologado
+          ? "unitario_homologado"
+          : estimado
+            ? "unitario_estimado"
+            : "desconhecido";
+        // Sem valor unitário extraível: mantém só se descrição é específica
+        // (o cliente ainda pode usar como evidência manual).
+        if ((typeof unit !== "number" || unit <= 0) && !it.descricao) continue;
+        expanded.push({
+          ...parent,
+          id: `${parent.id ?? `${parent.orgao_cnpj}-${parent.ano}-${parent.numero}`}-it${it.numeroItem ?? Math.random().toString(36).slice(2, 6)}`,
+          // Sobrescreve o `title` herdado do parent (no M2A é o slug do processo,
+          // ex.: "aquisicao de material de expediente") com a descrição real do
+          // ITEM — caso contrário o toResult escolhe o slug como título por ter
+          // tamanho "bonito" e a descrição real (longa) perde no ranking.
+          title: it.descricao ?? parent.title,
+          objeto_compra: it.descricao ?? parent.objeto_compra,
+          descricao: it.descricao ?? parent.descricao,
+          valor_unitario_homologado: homologado,
+          valor_unitario_estimado: estimado,
+          valor_unitario: typeof unit === "number" ? unit : undefined,
+          valor_total_item: it.valorTotalHomologado ?? it.valorTotal,
+          unidade_medida: it.unidadeMedida ?? parent.unidade_medida,
+          quantidade: it.quantidade,
+          situacao: it.situacaoCompraItemNome ?? parent.situacao,
+          _valorTipo: tipoVal,
+        });
+      }
+    }
+  };
+
   // Concorrência limitada para não estourar o gateway do PNCP.
   // 12 paralelos: testado contra o gateway sem 429.
   const CONCURRENCY = 12;
-  const fetched: PromiseSettledResult<{ parent: RawItem; items: PncpItemRaw[] }>[] = [];
   for (let i = 0; i < enrichable.length; i += CONCURRENCY) {
     const chunk = enrichable.slice(i, i + CONCURRENCY);
     const tChunk = Date.now();
@@ -795,142 +929,18 @@ export async function enrichWithPNCPItems(raw: RawItem[], query: string, limit =
         return { parent, items };
       }),
     );
-    fetched.push(...part);
+    await processFetched(part);
     console.info(
-      `[enrichPNCP] chunk ${i / CONCURRENCY + 1}/${Math.ceil(enrichable.length / CONCURRENCY)} concluído em ${Date.now() - tChunk}ms`,
+      `[enrichPNCP] chunk ${i / CONCURRENCY + 1}/${Math.ceil(enrichable.length / CONCURRENCY)} concluído em ${Date.now() - tChunk}ms expanded=${expanded.length}`,
     );
+    await emitProgress();
   }
-  console.info(`[enrichPNCP] etapa /itens concluída em ${Date.now() - t0Total}ms`);
 
-  const expanded: RawItem[] = [];
-  const parentsFallback: RawItem[] = [];
-  let resultsFetched = 0;
-  for (const s of fetched) {
-    if (s.status !== "fulfilled") continue;
-    const { parent, items } = s.value;
-    const isM2A = parent._source === "M2A";
-    if (!items || items.length === 0) {
-      // Resultado oficial do PNCP sem itens individuais não deve virar card:
-      // o usuário pediu lista de ITENS, não lista de processos/atas/editais.
-      // M2A: descobre processos por TEMA — sem itens reais do PNCP, descarta
-      // (nunca mostrar o objeto da contratação como se fosse o item).
-      if (isM2A) continue;
-      if (parent._source === "Outro" || parent._supplier) parentsFallback.push(parent);
-      continue;
-    }
-    // Filtra itens cuja descrição tem ao menos 1 token da consulta
-    const relevant = items.filter((it) => {
-      const d = (it.descricao ?? "").toLowerCase();
-      if (!d) return false;
-      if (qTokens.length === 0) return true;
-      return qTokens.some((t) => d.includes(t));
-    });
-    // Se nenhum item bater com a query, NÃO descarta: pega os itens com
-    // valor unitário mesmo assim (podem ser variantes/sinônimos) e marca
-    // como fallback de menor prioridade.
-    // EXCEÇÃO M2A: o portal foi consultado por TEMA amplo (ex.: "material
-    // escolar"); se nenhum item bate com a query específica (ex.: "caderno"),
-    // o processo inteiro é irrelevante — descarta.
-    if (isM2A && relevant.length === 0) continue;
-    const useItems = relevant.length > 0 ? relevant : items;
-    // Tenta enriquecer com /resultados (valor HOMOLOGADO real) para itens
-    // que ainda não trazem valorUnitarioHomologado direto na lista /itens.
-    const targetForResultados = {
-      cnpj: String(parent.orgao_cnpj ?? "").replace(/\D/g, ""),
-      ano: String(parent.ano ?? ""),
-      seq: String(parent.numero ?? "").replace(/\D/g, ""),
-    };
-    if (targetForResultados.cnpj.length === 14 && targetForResultados.ano && targetForResultados.seq) {
-      const RES_CONCURRENCY = 10;
-      const needsResultado = useItems.filter(
-        (it) => typeof it.numeroItem === "number" && !validPrice(it.valorUnitarioHomologado),
-      );
-      if (needsResultado.length > 0) {
-        console.info(
-          `[enrichPNCP] /resultados ${targetForResultados.cnpj}/${targetForResultados.ano}/${targetForResultados.seq} -> ${needsResultado.length} itens precisam de homologação`,
-        );
-      }
-      for (let i = 0; i < needsResultado.length; i += RES_CONCURRENCY) {
-        const chunk = needsResultado.slice(i, i + RES_CONCURRENCY);
-        const settled = await Promise.allSettled(
-          chunk.map((it) =>
-            fetchPncpItemResultado(
-              targetForResultados.cnpj,
-              targetForResultados.ano,
-              targetForResultados.seq,
-              it.numeroItem as number,
-            ).then((res) => ({ it, res })),
-          ),
-        );
-        for (const s of settled) {
-          if (s.status !== "fulfilled" || !s.value.res) continue;
-          resultsFetched++;
-          const { it, res } = s.value;
-          if (validPrice(res.valorUnitarioHomologado)) {
-            it.valorUnitarioHomologado = res.valorUnitarioHomologado;
-            if (validPrice(res.valorTotalHomologado)) it.valorTotalHomologado = res.valorTotalHomologado;
-            if (typeof res.quantidadeHomologada === "number" && res.quantidadeHomologada > 0)
-              it.quantidade = res.quantidadeHomologada;
-            // Vincula fornecedor vencedor ao item via parent (será propagado abaixo).
-            if (res.nomeRazaoSocialFornecedor && !parent.fornecedor) {
-              parent.fornecedor = res.nomeRazaoSocialFornecedor;
-            }
-          }
-        }
-      }
-    }
-    for (const it of useItems) {
-      const homologado = validPrice(it.valorUnitarioHomologado);
-      const estimado = validPrice(it.valorUnitarioEstimado);
-      const unit = homologado ?? estimado;
-      const tipoVal: PriceResult["valorTipo"] = homologado
-        ? "unitario_homologado"
-        : estimado
-          ? "unitario_estimado"
-          : "desconhecido";
-      // Sem valor unitário extraível: mantém só se descrição é específica
-      // (o cliente ainda pode usar como evidência manual).
-      if ((typeof unit !== "number" || unit <= 0) && !it.descricao) continue;
-      expanded.push({
-        ...parent,
-        id: `${parent.id ?? `${parent.orgao_cnpj}-${parent.ano}-${parent.numero}`}-it${it.numeroItem ?? Math.random().toString(36).slice(2, 6)}`,
-        // Sobrescreve o `title` herdado do parent (no M2A é o slug do processo,
-        // ex.: "aquisicao de material de expediente") com a descrição real do
-        // ITEM — caso contrário o toResult escolhe o slug como título por ter
-        // tamanho "bonito" e a descrição real (longa) perde no ranking.
-        title: it.descricao ?? parent.title,
-        objeto_compra: it.descricao ?? parent.objeto_compra,
-        descricao: it.descricao ?? parent.descricao,
-        valor_unitario_homologado: homologado,
-        valor_unitario_estimado: estimado,
-        valor_unitario: typeof unit === "number" ? unit : undefined,
-        valor_total_item: it.valorTotalHomologado ?? it.valorTotal,
-        unidade_medida: it.unidadeMedida ?? parent.unidade_medida,
-        quantidade: it.quantidade,
-        situacao: it.situacaoCompraItemNome ?? parent.situacao,
-        _valorTipo: tipoVal,
-      });
-    }
-  }
   console.info(
     `[enrichPNCP] FIM total=${Date.now() - t0Total}ms expanded=${expanded.length} resultadosHomologados=${resultsFetched}`,
   );
 
-  // Passthrough (Firecrawl/web): SEMPRE mantém. Resultado web é evidência
-  // qualitativa — o usuário pode abrir a fonte e validar o preço manualmente.
-  // O ranqueador vai empurrar resultados sem unitário pra baixo.
-  const kept = passthrough.map((r) => ({
-    ...r,
-    _valorTipo:
-      (r._valorTipo ??
-        (typeof r.valor_unitario_homologado === "number"
-          ? "unitario_homologado"
-          : typeof r.valor_unitario_estimado === "number" || typeof r.valor_unitario === "number"
-            ? "unitario_estimado"
-            : "desconhecido")) as PriceResult["valorTipo"],
-  }));
-
-  return [...expanded, ...parentsFallback, ...kept];
+  return [...expanded, ...parentsFallback, ...keptPassthrough];
 }
 
 // Compras.gov.br — endpoint público de contratos (Dados Abertos)
