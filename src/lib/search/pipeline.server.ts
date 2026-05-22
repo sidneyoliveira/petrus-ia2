@@ -753,14 +753,18 @@ export async function enrichWithPNCPItems(raw: RawItem[], query: string, limit =
   console.info(
     `[enrichPNCP] raw=${raw.length} enrichable=${enrichable.length} passthrough=${passthrough.length} limit=${limit}`,
   );
+  const t0Total = Date.now();
 
-  // Concorrência limitada para não estourar o gateway do PNCP
-  const CONCURRENCY = 8;
+  // Concorrência limitada para não estourar o gateway do PNCP.
+  // 12 paralelos: testado contra o gateway sem 429.
+  const CONCURRENCY = 12;
   const fetched: PromiseSettledResult<{ parent: RawItem; items: PncpItemRaw[] }>[] = [];
   for (let i = 0; i < enrichable.length; i += CONCURRENCY) {
     const chunk = enrichable.slice(i, i + CONCURRENCY);
+    const tChunk = Date.now();
     const part = await Promise.allSettled(
       chunk.map(async (r) => {
+        const tItem = Date.now();
         let parent = r;
         let target = {
           cnpj: (r.orgao_cnpj ?? "").replace(/\D/g, ""),
@@ -784,14 +788,22 @@ export async function enrichWithPNCPItems(raw: RawItem[], query: string, limit =
         }
 
         const items = await fetchPncpItens(target.cnpj, target.ano, target.sequencial, String(parent.tipo_documento ?? ""));
+        console.info(
+          `[enrichPNCP] itens ${target.cnpj}/${target.ano}/${target.sequencial} -> ${items.length} (${Date.now() - tItem}ms)`,
+        );
         return { parent, items };
       }),
     );
     fetched.push(...part);
+    console.info(
+      `[enrichPNCP] chunk ${i / CONCURRENCY + 1}/${Math.ceil(enrichable.length / CONCURRENCY)} concluído em ${Date.now() - tChunk}ms`,
+    );
   }
+  console.info(`[enrichPNCP] etapa /itens concluída em ${Date.now() - t0Total}ms`);
 
   const expanded: RawItem[] = [];
   const parentsFallback: RawItem[] = [];
+  let resultsFetched = 0;
   for (const s of fetched) {
     if (s.status !== "fulfilled") continue;
     const { parent, items } = s.value;
@@ -828,10 +840,15 @@ export async function enrichWithPNCPItems(raw: RawItem[], query: string, limit =
       seq: String(parent.numero ?? "").replace(/\D/g, ""),
     };
     if (targetForResultados.cnpj.length === 14 && targetForResultados.ano && targetForResultados.seq) {
-      const RES_CONCURRENCY = 6;
+      const RES_CONCURRENCY = 10;
       const needsResultado = useItems.filter(
         (it) => typeof it.numeroItem === "number" && !validPrice(it.valorUnitarioHomologado),
       );
+      if (needsResultado.length > 0) {
+        console.info(
+          `[enrichPNCP] /resultados ${targetForResultados.cnpj}/${targetForResultados.ano}/${targetForResultados.seq} -> ${needsResultado.length} itens precisam de homologação`,
+        );
+      }
       for (let i = 0; i < needsResultado.length; i += RES_CONCURRENCY) {
         const chunk = needsResultado.slice(i, i + RES_CONCURRENCY);
         const settled = await Promise.allSettled(
@@ -846,6 +863,7 @@ export async function enrichWithPNCPItems(raw: RawItem[], query: string, limit =
         );
         for (const s of settled) {
           if (s.status !== "fulfilled" || !s.value.res) continue;
+          resultsFetched++;
           const { it, res } = s.value;
           if (validPrice(res.valorUnitarioHomologado)) {
             it.valorUnitarioHomologado = res.valorUnitarioHomologado;
@@ -893,6 +911,9 @@ export async function enrichWithPNCPItems(raw: RawItem[], query: string, limit =
       });
     }
   }
+  console.info(
+    `[enrichPNCP] FIM total=${Date.now() - t0Total}ms expanded=${expanded.length} resultadosHomologados=${resultsFetched}`,
+  );
 
   // Passthrough (Firecrawl/web): SEMPRE mantém. Resultado web é evidência
   // qualitativa — o usuário pode abrir a fonte e validar o preço manualmente.
