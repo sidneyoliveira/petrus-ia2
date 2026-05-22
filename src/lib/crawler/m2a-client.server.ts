@@ -49,8 +49,9 @@ export function extractProcessRefs(html: string): { id: string; slug: string; ur
 
 /** Extrai a primeira URL canônica do PNCP encontrada no HTML do processo. */
 export function extractPncpRef(html: string): { cnpj: string; ano: string; sequencial: string; url: string } | null {
-  const re = /https?:\/\/pncp\.gov\.br\/app\/editais\/(\d{14})\/(\d{4})\/(\d+)/i;
-  const m = html.match(re);
+  const normalized = html.replace(/\\\//g, "/");
+  const re = /https?:\/\/pncp\.gov\.br\/app\/(?:editais|compras|atas|contratos)\/(\d{14})\/(\d{4})\/(\d+)/i;
+  const m = normalized.match(re);
   if (!m) return null;
   return {
     cnpj: m[1],

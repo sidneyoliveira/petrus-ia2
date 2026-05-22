@@ -284,7 +284,9 @@ export const Route = createFileRoute("/api/public/search/stream")({
             };
 
             try {
-              // 0) cache
+              // 0) cache opcional: no stream público, o clique em "Buscar"
+              // envia forceRefresh=true para sempre revarrer as fontes. A UI
+              // já mostra o banco local em paralelo enquanto a varredura roda.
               const query_norm = normalizeQueryNorm(filters.query);
               const fHash = filtersHash(filters);
               if (!filters.forceRefresh) {
@@ -363,10 +365,15 @@ export const Route = createFileRoute("/api/public/search/stream")({
               });
               tasks.push({ name: "Mineração de anexos", run: () => mineAttachments(filters.query) });
               tasks.push({ name: "Portais privados", run: () => minePortais(filters.query) });
+              const addM2aPages = (term: string, cap = 10) => {
+                for (let p = 1; p <= 3; p++) {
+                  tasks.push({ name: `M2A "${term}" p${p}`, run: () => fetchM2A(term, cap, 18_000, 1, p) });
+                }
+              };
               const m2aTerm = filters.tema && filters.tema.length >= 2 ? filters.tema : filters.query;
-              tasks.push({ name: `M2A "${m2aTerm}"`, run: () => fetchM2A(m2aTerm, 15) });
+              addM2aPages(m2aTerm, 10);
               if (filters.tema && filters.tema !== filters.query) {
-                tasks.push({ name: `M2A "${filters.query}"`, run: () => fetchM2A(filters.query, 10) });
+                addM2aPages(filters.query, 8);
               }
               tasks.push({
                 name: `Portal CP "${filters.query}"`,
@@ -453,7 +460,20 @@ export const Route = createFileRoute("/api/public/search/stream")({
 
               // 4) enrich /itens (custoso mas faz toda a diferença para granularidade)
               safeEnqueue("phase", { name: "enriquecendo itens do PNCP" });
-              const enriched = await enrichWithPNCPItems(accRaw, filters.query, 250);
+              const enriched = await enrichWithPNCPItems(accRaw, filters.query, 120, async (partial) => {
+                safeEnqueue("snapshot", {
+                  items: lightRank(partial, filters).slice(0, 200),
+                  total: partial.length,
+                  sourcesDone: sourcesDone.length,
+                  totalSources: tasks.length,
+                });
+              });
+              safeEnqueue("snapshot", {
+                items: lightRank(enriched, filters).slice(0, 200),
+                total: enriched.length,
+                sourcesDone: sourcesDone.length,
+                totalSources: tasks.length,
+              });
 
               // 5) ranking pesado final
               safeEnqueue("phase", { name: "ranqueamento final" });

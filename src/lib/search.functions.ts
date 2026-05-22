@@ -185,11 +185,11 @@ export const searchPrices = createServerFn({ method: "POST" })
     // batem com a `query` específica (ex.: "caderno"). Sem `tema`, usa a
     // própria query como termo de busca.
     const m2aTerm = (data.tema && data.tema.length >= 2) ? data.tema : data.query;
-    tasks.push(fetchM2A(m2aTerm, 15));
+    for (let p = 1; p <= 3; p++) tasks.push(fetchM2A(m2aTerm, 10, 18_000, 1, p));
     if (data.tema && data.tema !== data.query) {
       // Quando há tema, faz uma segunda passada com a query específica
       // para cobrir processos que mencionam o item exato no título.
-      tasks.push(fetchM2A(data.query, 10));
+      for (let p = 1; p <= 3; p++) tasks.push(fetchM2A(data.query, 8, 18_000, 1, p));
     }
     // Rodada G — Portal de Compras Públicas (PCP): API pública que devolve
     // itens já granulares com valor unitário (referência + melhor lance).
@@ -217,7 +217,7 @@ export const searchPrices = createServerFn({ method: "POST" })
     // A busca do PNCP só devolve processos inteiros — sem o /itens o usuário
     // veria apenas o "objeto do contrato" (descrição do processo todo).
     // Limite alto para garantir cobertura por item.
-    raw = await enrichWithPNCPItems(raw, data.query, 250);
+    raw = await enrichWithPNCPItems(raw, data.query, 120);
 
     let results = raw.map(toResult);
 

@@ -65,6 +65,8 @@ export interface PriceResult {
   valorContratadoFonte?: "ata" | "contrato" | "homologacao" | null;
   /** Status da tentativa de descobrir o valor contratado. */
   contractFetchStatus?: "pending" | "ok" | "fail" | "na";
+  /** True quando o card veio apenas do banco local/cache do sistema. */
+  fromLocalDb?: boolean;
 }
 
 export interface SearchFilters {
