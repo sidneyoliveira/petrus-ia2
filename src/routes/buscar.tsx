@@ -19,6 +19,7 @@ const UFS = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","P
 
 const SearchSchema = z.object({
   q: z.coerce.string().optional().default(""),
+  tema: z.coerce.string().optional().default(""),
 });
 
 export const Route = createFileRoute("/buscar")({
@@ -40,8 +41,9 @@ export const Route = createFileRoute("/buscar")({
 
 function Buscar() {
   const navigate = useNavigate();
-  const { q } = Route.useSearch();
+  const { q, tema } = Route.useSearch();
   const [input, setInput] = useState(q);
+  const [temaInput, setTemaInput] = useState(tema);
   const [keywordsInput, setKeywordsInput] = useState("");
   const [mode, setMode] = useState<"semantic" | "exact" | "all_keywords">("semantic");
   const [filters, setFilters] = useState({
@@ -112,7 +114,7 @@ function Buscar() {
   );
 
   const { data, isFetching, error, refetch } = useQuery({
-    queryKey: ["search", q, mode, parsedKeywords.join("|")],
+    queryKey: ["search", q, tema, mode, parsedKeywords.join("|")],
     enabled: q.trim().length >= 2,
     staleTime: 30 * 60_000,
     gcTime: 24 * 60 * 60_000,
@@ -123,6 +125,7 @@ function Buscar() {
       callSearch({
         data: {
           query: q.trim(),
+          tema: tema.trim() || undefined,
           pagina: 1,
           mode,
           keywords: parsedKeywords.length ? parsedKeywords : undefined,
@@ -154,6 +157,7 @@ function Buscar() {
     callSearch({
       data: {
         query: q.trim(),
+        tema: tema.trim() || undefined,
         pagina: 1,
         mode,
         keywords: parsedKeywords.length ? parsedKeywords : undefined,
@@ -163,7 +167,7 @@ function Buscar() {
       .then((fresh) => {
         if (cancelled) return;
         queryClient.setQueryData(
-          ["search", q, mode, parsedKeywords.join("|")],
+          ["search", q, tema, mode, parsedKeywords.join("|")],
           fresh,
         );
       })
