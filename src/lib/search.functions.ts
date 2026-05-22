@@ -489,45 +489,24 @@ async function resolvePncpCompraFromContract(
 ): Promise<{ cnpj: string; ano: string; sequencial: string; fornecedor?: string } | null> {
   const seq = String(Number(String(sequencialContrato).replace(/\D/g, "")) || sequencialContrato);
   const url = `https://pncp.gov.br/pncp-api/v1/orgaos/${cnpj}/contratos/${ano}/${seq}`;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 12_000);
-  try {
-    const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
-      signal: ctrl.signal,
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as Record<string, unknown>;
-    const compra = parseNumeroControlePncpCompra(data.numeroControlePncpCompra ?? data.numeroControlePNCPCompra);
-    if (!compra) return null;
-    return {
-      ...compra,
-      fornecedor: typeof data.nomeRazaoSocialFornecedor === "string" ? data.nomeRazaoSocialFornecedor : undefined,
-    };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+  const data = await pncpFetchJson<Record<string, unknown>>(url);
+  if (!data) return null;
+  const compra = parseNumeroControlePncpCompra(data.numeroControlePncpCompra ?? data.numeroControlePNCPCompra);
+  if (!compra) return null;
+  return {
+    ...compra,
+    fornecedor: typeof data.nomeRazaoSocialFornecedor === "string" ? data.nomeRazaoSocialFornecedor : undefined,
+  };
 }
 
 async function fetchPNCP(query: string, pagina: number, tamanho = 50): Promise<RawItem[]> {
   const tipos = "edital,ata,contrato";
   const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=${tipos}&ordenacao=-data&pagina=${pagina}&pagina_tam=${tamanho}&status=todos`;
-  try {
-    const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
-    });
-    if (!res.ok) {
-      console.warn("PNCP search HTTP", res.status);
-      return [];
-    }
-    const data = (await res.json()) as { items?: RawItem[]; resultados?: RawItem[] };
-    return data.items ?? data.resultados ?? [];
-  } catch (e) {
-    console.error("PNCP fetch error", e);
-    return [];
-  }
+  const data = await pncpFetchJson<{ items?: RawItem[]; resultados?: RawItem[] }>(url, {
+    timeoutMs: 15_000,
+  });
+  if (!data) return [];
+  return data.items ?? data.resultados ?? [];
 }
 
 // PNCP API de consulta — retorna ITENS individuais de uma contratação/ata/contrato,
