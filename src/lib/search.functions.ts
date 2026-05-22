@@ -560,6 +560,7 @@ async function fetchM2A(searchTerm: string, cap = 15): Promise<RawItem[]> {
         url: ref.url,
         item_url: ref.url,
         situacao: "Finalizada",
+        _source: "M2A",
         _sourceDomain: "compras.m2atecnologia.com.br",
         _sourceName: "M2A Tecnologia",
       });
