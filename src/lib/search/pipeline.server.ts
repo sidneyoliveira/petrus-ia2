@@ -9,6 +9,7 @@
 import { z } from "zod";
 import type { PriceResult, SearchSourceStatus } from "../types";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import type { Json } from "@/integrations/supabase/types";
 import { safeUnitValue } from "../pncp-rules";
 import { searchComprasGovByKeyword, type ComprasGovUnified } from "../compras-gov.server";
 import { fetchM2aListing, fetchM2aPncpRef } from "../crawler/m2a-client.server";

@@ -12,19 +12,26 @@ import { healValuesBackground } from "./heal/value-healer.server";
 import { embedQuoteItemsBackground } from "./embed/embedder.server";
 import * as Cache from "./search/cache.server";
 import * as Pipeline from "./search/pipeline.server";
+import type {
+  PcpItem,
+  PcpProcesso,
+  PncpItemRaw,
+  PncpResultadoRaw,
+  RawItem,
+  TCECERow,
+} from "./search/pipeline.server";
+
 
 // Re-bind module exports as locals so the serverFn body keeps using
 // bare names (refactor preserved behavior 1:1 from the old god-file).
 const {
-  asJson,
   CACHE_TTL_MS,
   normalizeQueryNorm,
   filtersHash,
   readCachedSearch,
   writeCachedSearch,
-} = Cache;
-const {
-  asJson,
+  } = Cache;,
+  const {,
   PNCP_UA,
   pncpFetchJson,
   FORBIDDEN,
@@ -37,19 +44,14 @@ const {
   jaccard,
   cosine,
   getEmbeddings,
-  RawItem,
   parsePncpPublicUrl,
   parseNumeroControlePncpCompra,
   resolvePncpCompraFromContract,
   fetchPNCP,
   fetchM2A,
-  PncpItemRaw,
-  PcpProcesso,
-  PcpItem,
   fetchPortalComprasPublicas,
   validPrice,
   fetchPncpItens,
-  PncpResultadoRaw,
   fetchPncpItemResultado,
   enrichWithPNCPItems,
   fetchComprasGov,
@@ -57,7 +59,6 @@ const {
   fetchTransparencia,
   TCE_CE_HOSTS,
   TCE_CE_VIEWS,
-  TCECERow,
   numFromBR,
   fetchTceCeView,
   fetchTCECE,
@@ -89,7 +90,7 @@ const {
   applyJuridicScore,
 } = Pipeline;
 // Marca como "usados" para o linter — todos são referenciados pelo serverFn abaixo.
-void ({ asJson, CACHE_TTL_MS, normalizeQueryNorm, filtersHash, readCachedSearch, writeCachedSearch, asJson, PNCP_UA, pncpFetchJson, FORBIDDEN, looksLikeMultiItem, cleanItemTitle, looksLikeRawDocumentText, looksLikeProcessObject, looksLikeProcessNumberTitle, tokenize, jaccard, cosine, getEmbeddings, RawItem, parsePncpPublicUrl, parseNumeroControlePncpCompra, resolvePncpCompraFromContract, fetchPNCP, fetchM2A, PncpItemRaw, PcpProcesso, PcpItem, fetchPortalComprasPublicas, validPrice, fetchPncpItens, PncpResultadoRaw, fetchPncpItemResultado, enrichWithPNCPItems, fetchComprasGov, unifiedToRawItem, fetchTransparencia, TCE_CE_HOSTS, TCE_CE_VIEWS, TCECERow, numFromBR, fetchTceCeView, fetchTCECE, expandQuery, sourceMetaForUrl, fetchFirecrawlWeb, fetchFirecrawlPerDomain, fetchFirecrawlSuppliers, UNIDADES_RE, parsePriceBR, parseQtyBR, extractItemsFromText, dorkPdfAttachments, scrapeAndMine, ONTOLOGY_PROMPT, ontologicalExtract, extractItemsFromHtmlTables, mineAttachments, PORTAIS, searchPortalUrls, minePortais, loadActiveSources, registerDiscoveredDomains, buildPncpUrl, isSupplierOrCommercial, isGranularItemResult, summarizeSources, toResult, applyJuridicScore });
+void ({ asJson, CACHE_TTL_MS, normalizeQueryNorm, filtersHash, readCachedSearch, writeCachedSearch, PNCP_UA, pncpFetchJson, FORBIDDEN, looksLikeMultiItem, cleanItemTitle, looksLikeRawDocumentText, looksLikeProcessObject, looksLikeProcessNumberTitle, tokenize, jaccard, cosine, getEmbeddings, parsePncpPublicUrl, parseNumeroControlePncpCompra, resolvePncpCompraFromContract, fetchPNCP, fetchM2A, fetchPortalComprasPublicas, validPrice, fetchPncpItens, fetchPncpItemResultado, enrichWithPNCPItems, fetchComprasGov, unifiedToRawItem, fetchTransparencia, TCE_CE_HOSTS, TCE_CE_VIEWS, numFromBR, fetchTceCeView, fetchTCECE, expandQuery, sourceMetaForUrl, fetchFirecrawlWeb, fetchFirecrawlPerDomain, fetchFirecrawlSuppliers, UNIDADES_RE, parsePriceBR, parseQtyBR, extractItemsFromText, dorkPdfAttachments, scrapeAndMine, ONTOLOGY_PROMPT, ontologicalExtract, extractItemsFromHtmlTables, mineAttachments, PORTAIS, searchPortalUrls, minePortais, loadActiveSources, registerDiscoveredDomains, buildPncpUrl, isSupplierOrCommercial, isGranularItemResult, summarizeSources, toResult, applyJuridicScore });
 
 const FilterSchema = z.object({
   query: z.string().trim().min(1).max(200),
