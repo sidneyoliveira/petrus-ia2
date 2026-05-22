@@ -118,10 +118,17 @@ export const searchPrices = createServerFn({ method: "POST" })
     // O usuário só recebe variantes geradas por IA quando explicitamente
     // escolhe o modo "semantic".
     const mode = data.mode ?? "exact";
-    const variants =
+    const baseVariants =
       mode === "exact" || mode === "all_keywords"
         ? [data.query]
         : await expandQuery(data.query, apiKey);
+    // Tema (ex.: "fardamento") complementa o item específico (ex.: "camiseta
+    // polo"): processos costumam ter o tema no objeto, e o item só aparece
+    // dentro dos /itens. Buscar pelos dois em paralelo amplia a cobertura.
+    const variants =
+      data.tema && data.tema.length >= 2 && data.tema !== data.query
+        ? [...baseVariants, data.tema]
+        : baseVariants;
 
     // 1b) Catálogo dinâmico de fontes para Firecrawl
     const catalog = await loadActiveSources();
