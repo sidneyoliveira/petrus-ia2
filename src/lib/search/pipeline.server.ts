@@ -326,7 +326,28 @@ export async function fetchPNCP(query: string, pagina: number, tamanho = 50): Pr
     timeoutMs: 15_000,
   });
   if (!data) return [];
-  return data.items ?? data.resultados ?? [];
+  const items = (data.items ?? data.resultados ?? []) as Array<RawItem & {
+    tem_resultado?: boolean;
+    cancelado?: boolean;
+    data_fim_vigencia?: string;
+  }>;
+  // PNCP /api/search ignora o parâmetro `status` (testado empiricamente:
+  // qualquer valor exceto `recebendo_proposta` devolve o total). Filtramos
+  // localmente para manter apenas processos ENCERRADOS com resultado real:
+  //   • tem_resultado === true (existe homologação/resultado registrado)
+  //   • !cancelado
+  //   • data_fim_vigencia já passou (sessão pública encerrada)
+  const now = Date.now();
+  const filtered = items.filter((it) => {
+    if (it.cancelado === true) return false;
+    const hasResult = it.tem_resultado === true;
+    const dtFim = typeof it.data_fim_vigencia === "string" ? Date.parse(it.data_fim_vigencia) : NaN;
+    const closed = Number.isFinite(dtFim) ? dtFim < now : false;
+    // Aceita se tem resultado homologado OU se a sessão já encerrou.
+    return hasResult || closed;
+  });
+  console.info(`[pncp] query="${query}" p${pagina} bruto=${items.length} encerrados=${filtered.length}`);
+  return filtered;
 }
 
 /**
@@ -732,14 +753,18 @@ export async function enrichWithPNCPItems(raw: RawItem[], query: string, limit =
   console.info(
     `[enrichPNCP] raw=${raw.length} enrichable=${enrichable.length} passthrough=${passthrough.length} limit=${limit}`,
   );
+  const t0Total = Date.now();
 
-  // Concorrência limitada para não estourar o gateway do PNCP
-  const CONCURRENCY = 8;
+  // Concorrência limitada para não estourar o gateway do PNCP.
+  // 12 paralelos: testado contra o gateway sem 429.
+  const CONCURRENCY = 12;
   const fetched: PromiseSettledResult<{ parent: RawItem; items: PncpItemRaw[] }>[] = [];
   for (let i = 0; i < enrichable.length; i += CONCURRENCY) {
     const chunk = enrichable.slice(i, i + CONCURRENCY);
+    const tChunk = Date.now();
     const part = await Promise.allSettled(
       chunk.map(async (r) => {
+        const tItem = Date.now();
         let parent = r;
         let target = {
           cnpj: (r.orgao_cnpj ?? "").replace(/\D/g, ""),
@@ -763,14 +788,22 @@ export async function enrichWithPNCPItems(raw: RawItem[], query: string, limit =
         }
 
         const items = await fetchPncpItens(target.cnpj, target.ano, target.sequencial, String(parent.tipo_documento ?? ""));
+        console.info(
+          `[enrichPNCP] itens ${target.cnpj}/${target.ano}/${target.sequencial} -> ${items.length} (${Date.now() - tItem}ms)`,
+        );
         return { parent, items };
       }),
     );
     fetched.push(...part);
+    console.info(
+      `[enrichPNCP] chunk ${i / CONCURRENCY + 1}/${Math.ceil(enrichable.length / CONCURRENCY)} concluído em ${Date.now() - tChunk}ms`,
+    );
   }
+  console.info(`[enrichPNCP] etapa /itens concluída em ${Date.now() - t0Total}ms`);
 
   const expanded: RawItem[] = [];
   const parentsFallback: RawItem[] = [];
+  let resultsFetched = 0;
   for (const s of fetched) {
     if (s.status !== "fulfilled") continue;
     const { parent, items } = s.value;
@@ -807,10 +840,15 @@ export async function enrichWithPNCPItems(raw: RawItem[], query: string, limit =
       seq: String(parent.numero ?? "").replace(/\D/g, ""),
     };
     if (targetForResultados.cnpj.length === 14 && targetForResultados.ano && targetForResultados.seq) {
-      const RES_CONCURRENCY = 6;
+      const RES_CONCURRENCY = 10;
       const needsResultado = useItems.filter(
         (it) => typeof it.numeroItem === "number" && !validPrice(it.valorUnitarioHomologado),
       );
+      if (needsResultado.length > 0) {
+        console.info(
+          `[enrichPNCP] /resultados ${targetForResultados.cnpj}/${targetForResultados.ano}/${targetForResultados.seq} -> ${needsResultado.length} itens precisam de homologação`,
+        );
+      }
       for (let i = 0; i < needsResultado.length; i += RES_CONCURRENCY) {
         const chunk = needsResultado.slice(i, i + RES_CONCURRENCY);
         const settled = await Promise.allSettled(
@@ -825,6 +863,7 @@ export async function enrichWithPNCPItems(raw: RawItem[], query: string, limit =
         );
         for (const s of settled) {
           if (s.status !== "fulfilled" || !s.value.res) continue;
+          resultsFetched++;
           const { it, res } = s.value;
           if (validPrice(res.valorUnitarioHomologado)) {
             it.valorUnitarioHomologado = res.valorUnitarioHomologado;
@@ -872,6 +911,9 @@ export async function enrichWithPNCPItems(raw: RawItem[], query: string, limit =
       });
     }
   }
+  console.info(
+    `[enrichPNCP] FIM total=${Date.now() - t0Total}ms expanded=${expanded.length} resultadosHomologados=${resultsFetched}`,
+  );
 
   // Passthrough (Firecrawl/web): SEMPRE mantém. Resultado web é evidência
   // qualitativa — o usuário pode abrir a fonte e validar o preço manualmente.
@@ -947,15 +989,26 @@ export function unifiedToRawItem(u: ComprasGovUnified): RawItem {
 
 // Portal da Transparência — atas/registros de preço (variante PNCP filtrada)
 export async function fetchTransparencia(query: string): Promise<RawItem[]> {
-  const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=ata&ordenacao=-data&pagina=1&pagina_tam=15&status=todos`;
+  // Usuário pediu para se concentrar em EDITAIS encerrados — não buscamos
+  // mais atas. A "Transparência" passa a complementar a busca de editais
+  // com ordenação diferente (relevância) para cobrir resultados que o
+  // fetchPNCP pode ter empurrado para outras páginas.
+  const url = `https://pncp.gov.br/api/search/?q=${encodeURIComponent(query)}&tipos_documento=edital&ordenacao=-relevance&pagina=1&pagina_tam=20&status=todos`;
   try {
     const res = await fetch(url, {
       headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
     });
     if (!res.ok) return [];
-    const data = (await res.json()) as { items?: RawItem[]; resultados?: RawItem[] };
-    const items = data.items ?? data.resultados ?? [];
-    return items.map((it) => ({ ...it, _source: "Transparência" }));
+    const data = (await res.json()) as { items?: Array<RawItem & { tem_resultado?: boolean; cancelado?: boolean; data_fim_vigencia?: string }>; resultados?: RawItem[] };
+    const items = (data.items ?? (data.resultados as RawItem[] | undefined) ?? []) as Array<RawItem & { tem_resultado?: boolean; cancelado?: boolean; data_fim_vigencia?: string }>;
+    const now = Date.now();
+    const filtered = items.filter((it) => {
+      if (it.cancelado === true) return false;
+      const dtFim = typeof it.data_fim_vigencia === "string" ? Date.parse(it.data_fim_vigencia) : NaN;
+      const closed = Number.isFinite(dtFim) ? dtFim < now : false;
+      return it.tem_resultado === true || closed;
+    });
+    return filtered.map((it) => ({ ...it, _source: "Transparência", tipo_documento: "edital" } as RawItem));
   } catch (e) {
     console.warn("Transparência fetch error", e);
     return [];
@@ -973,7 +1026,6 @@ export async function fetchTransparencia(query: string): Promise<RawItem[]> {
 // Se nenhuma responder (rede/geo-block), devolve [] silenciosamente.
 export const TCE_CE_HOSTS = [
   "https://api-dados-abertos.tce.ce.gov.br/sim",
-  "https://api.tce.ce.gov.br/index.php/sim/1_0",
 ];
 export const TCE_CE_VIEWS = ["queryView_dv_itens_licitados", "queryView_dv_contratados"];
 
@@ -1017,41 +1069,53 @@ export function numFromBR(v: unknown): number | undefined {
 }
 
 export async function fetchTceCeView(host: string, view: string, query: string): Promise<TCECERow[]> {
-  // Parametros heurísticos: tentamos `descricao_item` como filtro de texto.
-  // Algumas instâncias usam `q` ou `objeto` — incluímos os dois.
-  const params = new URLSearchParams({
-    descricao_item: query,
-    objeto: query,
-    q: query,
-    limit: "30",
-  });
+  // A API de Dados Abertos do TCE-CE segue o estilo OData v2 (mesmo padrão
+  // do endpoint público /sim/municipios?$format=json&$count=...).
+  // Para filtrar por texto usamos `$filter=substringof('<termo>',descricao_item)`.
+  // Caso o filtro seja rejeitado, fazemos um fallback sem filtro e tratamos
+  // a filtragem por keyword localmente no fetchTCECE.
+  const safe = query.replace(/'/g, "''");
+  const filterField = view.includes("itens") ? "descricao_item" : "objeto";
+  const params = new URLSearchParams();
+  params.set("$format", "json");
+  params.set("$count", "60");
+  params.set("$start_index", "0");
+  params.set("$filter", `substringof('${safe}',${filterField})`);
   const url = `${host}/${view}?${params.toString()}`;
   const ctrl = new AbortController();
-  // TCE-CE costuma ficar indisponível (geo-block / hosts fora do ar).
-  // Timeout agressivo para não atrasar o restante do pipeline.
-  const timer = setTimeout(() => ctrl.abort(), 4_000);
+  // O host responde em ~1-3s quando alcançável (testado via navegador do
+  // usuário). Damos 8s para tolerar congestionamento do gateway do TCE.
+  const timer = setTimeout(() => ctrl.abort(), 8_000);
+  const t0 = Date.now();
   try {
     const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "CotacaoIA/1.0" },
+      headers: { Accept: "application/json", "User-Agent": PNCP_UA },
       signal: ctrl.signal,
     });
     if (!res.ok) {
-      console.warn(`[tce-ce] ${view} HTTP ${res.status} em ${host}`);
+      console.warn(`[tce-ce] ${view} HTTP ${res.status} em ${host} (${Date.now() - t0}ms)`);
       return [];
     }
     const j = (await res.json().catch(() => null)) as unknown;
-    if (Array.isArray(j)) return j as TCECERow[];
-    if (j && typeof j === "object") {
+    let rows: TCECERow[] = [];
+    if (Array.isArray(j)) rows = j as TCECERow[];
+    else if (j && typeof j === "object") {
       const obj = j as Record<string, unknown>;
-      for (const key of ["data", "items", "resultados", "rows", "result"]) {
+      for (const key of ["data", "items", "resultados", "rows", "result", "d"]) {
         const arr = obj[key];
-        if (Array.isArray(arr)) return arr as TCECERow[];
+        if (Array.isArray(arr)) { rows = arr as TCECERow[]; break; }
+        // OData wrapper: { d: { results: [...] } }
+        if (arr && typeof arr === "object" && Array.isArray((arr as Record<string, unknown>).results)) {
+          rows = (arr as { results: TCECERow[] }).results;
+          break;
+        }
       }
     }
-    return [];
+    console.info(`[tce-ce] ${view} ok: ${rows.length} linhas em ${Date.now() - t0}ms`);
+    return rows;
   } catch (e) {
     const msg = (e as Error)?.message ?? "erro";
-    console.warn(`[tce-ce] ${view} falhou em ${host}: ${msg.slice(0, 80)}`);
+    console.warn(`[tce-ce] ${view} falhou em ${host} após ${Date.now() - t0}ms: ${msg.slice(0, 80)}`);
     return [];
   } finally {
     clearTimeout(timer);
@@ -1863,20 +1927,21 @@ export function buildPncpUrl(raw: RawItem): string | undefined {
     const u = (raw.url as string | undefined) || (raw.item_url as string | undefined);
     return u && /^https?:\/\//i.test(u) ? u : undefined;
   }
-  const tipo = (raw.tipo_documento ?? "").toLowerCase();
+  // Usuário pediu: sempre apontar para o EDITAL canônico no PNCP — nunca
+  // para a página de ata, contrato ou empenho. Reescreve qualquer path que
+  // venha como /atas/... ou /contratos/... para /editais/... usando os
+  // mesmos {cnpj}/{ano}/{seq} (mesma compra mãe).
+  const rewriteToEdital = (p: string): string => {
+    return p.replace(/\/(?:app\/)?(?:atas|contratos|empenhos|compras)\//i, "/app/editais/");
+  };
   const path = (raw.item_url as string | undefined) || (raw.url as string | undefined);
-  if (path && /^https?:\/\//i.test(path)) return path;
-  if (path && path.startsWith("/")) return `https://pncp.gov.br/app${path}`;
+  if (path && /^https?:\/\//i.test(path)) return rewriteToEdital(path);
+  if (path && path.startsWith("/")) return rewriteToEdital(`https://pncp.gov.br/app${path}`);
   const cnpj = (raw.orgao_cnpj ?? "").replace(/\D/g, "");
   const ano = raw.ano ? String(raw.ano) : "";
   const seq = raw.numero ? String(raw.numero).replace(/\D/g, "") : "";
   if (cnpj && ano && seq) {
-    const seg = tipo.includes("ata")
-      ? "atas"
-      : tipo.includes("contrato")
-        ? "contratos"
-        : "editais";
-    return `https://pncp.gov.br/app/${seg}/${cnpj}/${ano}/${seq}`;
+    return `https://pncp.gov.br/app/editais/${cnpj}/${ano}/${seq}`;
   }
   return undefined;
 }
