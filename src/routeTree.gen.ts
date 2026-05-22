@@ -11,11 +11,13 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SobreRouteImport } from './routes/sobre'
 import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as CotacaoRouteImport } from './routes/cotacao'
 import { Route as BuscarRouteImport } from './routes/buscar'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiOcrRouteImport } from './routes/api/ocr'
+import { Route as ApiPublicHooksHarvestTickRouteImport } from './routes/api/public/hooks/harvest-tick'
 
 const SobreRoute = SobreRouteImport.update({
   id: '/sobre',
@@ -25,6 +27,11 @@ const SobreRoute = SobreRouteImport.update({
 const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
   id: '/sitemap.xml',
   path: '/sitemap.xml',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CotacaoRoute = CotacaoRouteImport.update({
@@ -52,24 +59,34 @@ const ApiOcrRoute = ApiOcrRouteImport.update({
   path: '/api/ocr',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicHooksHarvestTickRoute =
+  ApiPublicHooksHarvestTickRouteImport.update({
+    id: '/api/public/hooks/harvest-tick',
+    path: '/api/public/hooks/harvest-tick',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/buscar': typeof BuscarRoute
   '/cotacao': typeof CotacaoRoute
+  '/login': typeof LoginRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
   '/api/ocr': typeof ApiOcrRoute
+  '/api/public/hooks/harvest-tick': typeof ApiPublicHooksHarvestTickRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/buscar': typeof BuscarRoute
   '/cotacao': typeof CotacaoRoute
+  '/login': typeof LoginRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
   '/api/ocr': typeof ApiOcrRoute
+  '/api/public/hooks/harvest-tick': typeof ApiPublicHooksHarvestTickRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -77,9 +94,11 @@ export interface FileRoutesById {
   '/admin': typeof AdminRoute
   '/buscar': typeof BuscarRoute
   '/cotacao': typeof CotacaoRoute
+  '/login': typeof LoginRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/sobre': typeof SobreRoute
   '/api/ocr': typeof ApiOcrRoute
+  '/api/public/hooks/harvest-tick': typeof ApiPublicHooksHarvestTickRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -88,27 +107,33 @@ export interface FileRouteTypes {
     | '/admin'
     | '/buscar'
     | '/cotacao'
+    | '/login'
     | '/sitemap.xml'
     | '/sobre'
     | '/api/ocr'
+    | '/api/public/hooks/harvest-tick'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/admin'
     | '/buscar'
     | '/cotacao'
+    | '/login'
     | '/sitemap.xml'
     | '/sobre'
     | '/api/ocr'
+    | '/api/public/hooks/harvest-tick'
   id:
     | '__root__'
     | '/'
     | '/admin'
     | '/buscar'
     | '/cotacao'
+    | '/login'
     | '/sitemap.xml'
     | '/sobre'
     | '/api/ocr'
+    | '/api/public/hooks/harvest-tick'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -116,9 +141,11 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRoute
   BuscarRoute: typeof BuscarRoute
   CotacaoRoute: typeof CotacaoRoute
+  LoginRoute: typeof LoginRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   SobreRoute: typeof SobreRoute
   ApiOcrRoute: typeof ApiOcrRoute
+  ApiPublicHooksHarvestTickRoute: typeof ApiPublicHooksHarvestTickRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -135,6 +162,13 @@ declare module '@tanstack/react-router' {
       path: '/sitemap.xml'
       fullPath: '/sitemap.xml'
       preLoaderRoute: typeof SitemapDotxmlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/cotacao': {
@@ -172,6 +206,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiOcrRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/hooks/harvest-tick': {
+      id: '/api/public/hooks/harvest-tick'
+      path: '/api/public/hooks/harvest-tick'
+      fullPath: '/api/public/hooks/harvest-tick'
+      preLoaderRoute: typeof ApiPublicHooksHarvestTickRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -180,20 +221,12 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRoute,
   BuscarRoute: BuscarRoute,
   CotacaoRoute: CotacaoRoute,
+  LoginRoute: LoginRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   SobreRoute: SobreRoute,
   ApiOcrRoute: ApiOcrRoute,
+  ApiPublicHooksHarvestTickRoute: ApiPublicHooksHarvestTickRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
