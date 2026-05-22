@@ -1,10 +1,12 @@
 import { Link } from "@tanstack/react-router";
-import { Scale, Search, ShoppingBasket } from "lucide-react";
+import { Scale, Search, ShoppingBasket, LogIn, LogOut, User as UserIcon } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { useBasket } from "@/lib/basket";
+import { useAuth } from "@/lib/auth";
 
 export function SiteHeader() {
   const { items } = useBasket();
+  const auth = useAuth();
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border/60 glass">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6">
@@ -42,6 +44,32 @@ export function SiteHeader() {
             <Search className="h-3.5 w-3.5" />
             Nova pesquisa
           </Link>
+          {auth.isAuthenticated ? (
+            <div className="flex items-center gap-1">
+              <span className="hidden md:inline-flex items-center gap-1.5 text-xs text-muted-foreground px-2 max-w-[180px] truncate">
+                <UserIcon className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{auth.user?.email}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => auth.signOut()}
+                title="Sair"
+                className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs hover:bg-accent transition-smooth"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Sair</span>
+              </button>
+            </div>
+          ) : (
+            <Link
+              to="/login"
+              className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs hover:bg-accent transition-smooth"
+              title="Entrar"
+            >
+              <LogIn className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Entrar</span>
+            </Link>
+          )}
           <ThemeToggle />
         </div>
       </div>
