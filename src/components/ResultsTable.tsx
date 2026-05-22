@@ -14,10 +14,6 @@ import {
   ExternalLink,
   Highlighter,
   Bookmark,
-  CheckCircle2,
-  AlertCircle,
-  AlertTriangle,
-  HelpCircle,
   Wrench,
 } from "lucide-react";
 import type { PriceResult } from "@/lib/types";
@@ -37,53 +33,6 @@ function fmtDate(d?: string) {
 function fmtQty(q?: number | null) {
   if (typeof q !== "number") return "—";
   return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 3 }).format(q);
-}
-
-function MathCell({ item }: { item: PriceResult }) {
-  const s = item.mathStatus;
-  const q = item.extractionQuality;
-  if (s === "ok" && q === "tríade_ok") {
-    return (
-      <span
-        title="Qtd × Unitário = Total"
-        className="inline-flex items-center gap-1 text-success"
-      >
-        <CheckCircle2 className="h-4 w-4" />
-      </span>
-    );
-  }
-  if (s === "divergente") {
-    const pct = item.mathDeltaPct ? `${(item.mathDeltaPct * 100).toFixed(1)}%` : "";
-    return (
-      <span
-        title={`Divergência ${pct} — Qtd × Unit ≠ Total`}
-        className="inline-flex items-center gap-1 text-destructive"
-      >
-        <AlertCircle className="h-4 w-4" />
-      </span>
-    );
-  }
-  if (q === "só_global") {
-    return (
-      <span
-        title="Sem qtd nem unitário — provavelmente valor total do processo"
-        className="inline-flex items-center gap-1 text-destructive"
-      >
-        <AlertTriangle className="h-4 w-4" />
-      </span>
-    );
-  }
-  if (q === "sem_qtd" || q === "sem_unitário" || s === "incompleto" || s === "single_value") {
-    return (
-      <span
-        title="Tríade incompleta — faltam dados pra fechar a matemática"
-        className="inline-flex items-center gap-1 text-muted-foreground"
-      >
-        <HelpCircle className="h-4 w-4" />
-      </span>
-    );
-  }
-  return <span className="text-muted-foreground">—</span>;
 }
 
 interface Props {
@@ -129,7 +78,6 @@ export function ResultsTable({
               <TableHead className="w-24 text-right">Qtd</TableHead>
               <TableHead className="w-32 text-right">Unitário</TableHead>
               <TableHead className="w-32 text-right">Total</TableHead>
-              <TableHead className="w-12 text-center" title="Validação Qtd × Unit = Total">✓</TableHead>
               <TableHead className="min-w-[180px]">Órgão / UF</TableHead>
               <TableHead className="w-28">Data</TableHead>
               <TableHead className="min-w-[180px]">Fornecedor</TableHead>
@@ -196,9 +144,6 @@ export function ResultsTable({
                     <TableCell className="text-right tabular-nums text-sm">
                       {brl(item.valorTotal ?? item.valorTotalCalculado)}
                     </TableCell>
-                    <TableCell className="text-center">
-                      <MathCell item={item} />
-                    </TableCell>
                     <TableCell className="text-xs">
                       <div className="line-clamp-2" title={item.orgao}>
                         {item.orgao || "—"}
@@ -234,7 +179,7 @@ export function ResultsTable({
                   </TableRow>
                   {isOpen && (
                     <TableRow className="bg-muted/20 hover:bg-muted/20">
-                      <TableCell colSpan={12} className="p-5">
+                      <TableCell colSpan={11} className="p-5">
                         <div className="grid md:grid-cols-[1fr_auto] gap-4">
                           <div className="min-w-0">
                             <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
