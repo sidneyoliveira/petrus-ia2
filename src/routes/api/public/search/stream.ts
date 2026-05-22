@@ -309,10 +309,13 @@ export const Route = createFileRoute("/api/public/search/stream")({
                 }
               }
 
-              // 1) expansão + catálogo
-              const mode = filters.mode ?? "semantic";
+              // 1) expansão + catálogo. Padrão = literal; só expandimos via IA
+              // quando o usuário pediu explicitamente o modo "semantic".
+              const mode = filters.mode ?? "exact";
               const variants =
-                mode === "exact" ? [filters.query] : await expandQuery(filters.query, apiKey);
+                mode === "exact" || mode === "all_keywords"
+                  ? [filters.query]
+                  : await expandQuery(filters.query, apiKey);
               const catalog = await loadActiveSources();
               const siteFilters = catalog.map((s) => s.domain);
               const tceDomains = catalog

@@ -114,10 +114,12 @@ export const searchPrices = createServerFn({ method: "POST" })
       }
     }
 
-    // 1) Expansão inteligente da consulta (sinônimos via IA)
-    const mode = data.mode ?? "semantic";
+    // 1) Expansão da consulta. Padrão = literal (apenas o termo digitado).
+    // O usuário só recebe variantes geradas por IA quando explicitamente
+    // escolhe o modo "semantic".
+    const mode = data.mode ?? "exact";
     const variants =
-      mode === "exact"
+      mode === "exact" || mode === "all_keywords"
         ? [data.query]
         : await expandQuery(data.query, apiKey);
 
