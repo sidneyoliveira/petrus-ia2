@@ -326,7 +326,28 @@ export async function fetchPNCP(query: string, pagina: number, tamanho = 50): Pr
     timeoutMs: 15_000,
   });
   if (!data) return [];
-  return data.items ?? data.resultados ?? [];
+  const items = (data.items ?? data.resultados ?? []) as Array<RawItem & {
+    tem_resultado?: boolean;
+    cancelado?: boolean;
+    data_fim_vigencia?: string;
+  }>;
+  // PNCP /api/search ignora o parâmetro `status` (testado empiricamente:
+  // qualquer valor exceto `recebendo_proposta` devolve o total). Filtramos
+  // localmente para manter apenas processos ENCERRADOS com resultado real:
+  //   • tem_resultado === true (existe homologação/resultado registrado)
+  //   • !cancelado
+  //   • data_fim_vigencia já passou (sessão pública encerrada)
+  const now = Date.now();
+  const filtered = items.filter((it) => {
+    if (it.cancelado === true) return false;
+    const hasResult = it.tem_resultado === true;
+    const dtFim = typeof it.data_fim_vigencia === "string" ? Date.parse(it.data_fim_vigencia) : NaN;
+    const closed = Number.isFinite(dtFim) ? dtFim < now : false;
+    // Aceita se tem resultado homologado OU se a sessão já encerrou.
+    return hasResult || closed;
+  });
+  console.info(`[pncp] query="${query}" p${pagina} bruto=${items.length} encerrados=${filtered.length}`);
+  return filtered;
 }
 
 /**
