@@ -28,6 +28,14 @@ export interface ProcessDossierArquivo {
   data?: string;
 }
 
+export interface ProcessDossierAta {
+  numeroAta?: string;
+  vigenciaInicio?: string;
+  vigenciaFim?: string;
+  itens: { numeroItem: number; descricao: string }[];
+  arquivos: ProcessDossierArquivo[];
+}
+
 export interface ProcessDossierItem {
   numeroItem: number;
   descricao: string;
@@ -59,6 +67,7 @@ export interface ProcessDossier {
   valorTotalHomologado?: number;
   itens: ProcessDossierItem[];
   arquivos: ProcessDossierArquivo[];
+  atas: ProcessDossierAta[];
   /** True se conseguimos buscar dados oficiais ao vivo na API do PNCP. */
   liveData: boolean;
   warnings: string[];
@@ -122,6 +131,95 @@ async function fetchCompraArquivos(
       data: a.dataPublicacaoPncp,
     }))
     .filter((a) => a.url);
+}
+
+interface PncpAtaRaw {
+  numeroAtaRegistroPreco?: string;
+  numeroControlePNCPAta?: string;
+  sequencialAta?: number;
+  vigenciaInicio?: string;
+  vigenciaFim?: string;
+  dataVigenciaInicio?: string;
+  dataVigenciaFim?: string;
+}
+
+async function fetchAtaArquivos(
+  cnpj: string,
+  ano: string,
+  seq: string,
+  numeroAta: string | number,
+): Promise<ProcessDossierArquivo[]> {
+  const url = `https://pncp.gov.br/api/pncp/v1/orgaos/${cnpj}/compras/${ano}/${seq}/atas/${numeroAta}/arquivos`;
+  const j = await pncpFetchJson<PncpArquivoRaw[] | { data?: PncpArquivoRaw[] }>(url, {
+    timeoutMs: 10_000,
+    attempts: 2,
+  });
+  if (!j) return [];
+  const arr = Array.isArray(j) ? j : (j.data ?? []);
+  return arr
+    .filter((a) => a && (a.statusAtivo ?? true))
+    .map((a) => ({
+      titulo: (a.titulo || a.tipoDocumentoNome || `Ata ${numeroAta}`).trim(),
+      tipo: a.tipoDocumentoNome || "Ata de Registro de Preços",
+      url: a.url || a.uri || "",
+      data: a.dataPublicacaoPncp,
+    }))
+    .filter((a) => a.url);
+}
+
+async function fetchAtaItens(
+  cnpj: string,
+  ano: string,
+  seq: string,
+  numeroAta: string | number,
+): Promise<{ numeroItem: number; descricao: string }[]> {
+  const url = `https://pncp.gov.br/api/pncp/v1/orgaos/${cnpj}/compras/${ano}/${seq}/atas/${numeroAta}/itens`;
+  const j = await pncpFetchJson<PncpItemRaw[] | { data?: PncpItemRaw[] }>(url, {
+    timeoutMs: 10_000,
+    attempts: 2,
+  });
+  if (!j) return [];
+  const arr = Array.isArray(j) ? j : (j.data ?? []);
+  return arr.map((it, i) => ({
+    numeroItem: typeof it.numeroItem === "number" ? it.numeroItem : i + 1,
+    descricao: (it.descricao || "").trim(),
+  }));
+}
+
+async function fetchCompraAtas(
+  cnpj: string,
+  ano: string,
+  seq: string,
+): Promise<ProcessDossierAta[]> {
+  const url = `https://pncp.gov.br/api/pncp/v1/orgaos/${cnpj}/compras/${ano}/${seq}/atas`;
+  const j = await pncpFetchJson<PncpAtaRaw[] | { data?: PncpAtaRaw[] }>(url, {
+    timeoutMs: 10_000,
+    attempts: 2,
+  });
+  if (!j) return [];
+  const arr = Array.isArray(j) ? j : (j.data ?? []);
+  if (arr.length === 0) return [];
+  const limited = arr.slice(0, 6);
+  const out: ProcessDossierAta[] = [];
+  await Promise.all(
+    limited.map(async (a, idx) => {
+      const num =
+        a.numeroAtaRegistroPreco ??
+        (typeof a.sequencialAta === "number" ? a.sequencialAta : idx + 1);
+      const [arquivos, itens] = await Promise.all([
+        fetchAtaArquivos(cnpj, ano, seq, num),
+        fetchAtaItens(cnpj, ano, seq, num),
+      ]);
+      out.push({
+        numeroAta: String(num),
+        vigenciaInicio: a.vigenciaInicio ?? a.dataVigenciaInicio,
+        vigenciaFim: a.vigenciaFim ?? a.dataVigenciaFim,
+        itens,
+        arquivos,
+      });
+    }),
+  );
+  return out;
 }
 
 function brl(n?: number | null) {
@@ -227,16 +325,18 @@ export const buildProcessDossier = createServerFn({ method: "POST" })
         objetoCompra: data.fallback?.objetoCompra,
         itens: [],
         arquivos: [],
+        atas: [],
         liveData: false,
         warnings,
       };
     }
 
     // PNCP: busca paralela detalhe + itens + arquivos
-    const [detalhe, itensRaw, arquivos] = await Promise.all([
+    const [detalhe, itensRaw, arquivos, atas] = await Promise.all([
       fetchCompraDetalhe(cnpj, ano, sequencial),
       fetchCompraItens(cnpj, ano, sequencial),
       fetchCompraArquivos(cnpj, ano, sequencial),
+      fetchCompraAtas(cnpj, ano, sequencial).catch(() => [] as ProcessDossierAta[]),
     ]);
 
     if (!detalhe) {
@@ -273,7 +373,73 @@ export const buildProcessDossier = createServerFn({ method: "POST" })
       valorTotalHomologado: brl(detalhe?.valorTotalHomologado),
       itens,
       arquivos,
+      atas,
       liveData: Boolean(detalhe) || itens.length > 0,
       warnings,
     };
+  });
+
+// ---------------------- Download de PDFs (PNCP) ----------------------
+
+const FetchDocInput = z.object({ url: z.string().url() });
+
+export interface FetchedDocument {
+  base64: string;
+  contentType: string;
+  size: number;
+  ok: boolean;
+  error?: string;
+}
+
+const MAX_DOC_BYTES = 15 * 1024 * 1024;
+
+export const fetchPncpDocument = createServerFn({ method: "POST" })
+  .inputValidator((input: z.input<typeof FetchDocInput>) => FetchDocInput.parse(input))
+  .handler(async ({ data }): Promise<FetchedDocument> => {
+    let host = "";
+    try {
+      host = new URL(data.url).hostname.toLowerCase();
+    } catch {
+      return { base64: "", contentType: "", size: 0, ok: false, error: "URL inválida" };
+    }
+    if (!/(^|\.)pncp\.gov\.br$/.test(host)) {
+      return { base64: "", contentType: "", size: 0, ok: false, error: "Domínio não permitido" };
+    }
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 25_000);
+      const res = await fetch(data.url, {
+        headers: {
+          Accept: "application/pdf,*/*",
+          "User-Agent": "Petrus-IA-ReportFetcher/1.0",
+        },
+        signal: ctrl.signal,
+        redirect: "follow",
+      });
+      clearTimeout(timer);
+      if (!res.ok) {
+        return { base64: "", contentType: "", size: 0, ok: false, error: `HTTP ${res.status}` };
+      }
+      const contentType = res.headers.get("content-type") || "application/octet-stream";
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength > MAX_DOC_BYTES) {
+        return { base64: "", contentType, size: buf.byteLength, ok: false, error: "Arquivo muito grande" };
+      }
+      const bytes = new Uint8Array(buf);
+      let bin = "";
+      const CHUNK = 0x8000;
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+      }
+      const base64 = btoa(bin);
+      return { base64, contentType, size: buf.byteLength, ok: true };
+    } catch (e) {
+      return {
+        base64: "",
+        contentType: "",
+        size: 0,
+        ok: false,
+        error: e instanceof Error ? e.message : "Falha de rede",
+      };
+    }
   });
