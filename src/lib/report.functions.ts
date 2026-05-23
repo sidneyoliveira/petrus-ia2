@@ -28,6 +28,14 @@ export interface ProcessDossierArquivo {
   data?: string;
 }
 
+export interface ProcessDossierAta {
+  numeroAta?: string;
+  vigenciaInicio?: string;
+  vigenciaFim?: string;
+  itens: { numeroItem: number; descricao: string }[];
+  arquivos: ProcessDossierArquivo[];
+}
+
 export interface ProcessDossierItem {
   numeroItem: number;
   descricao: string;
@@ -59,6 +67,7 @@ export interface ProcessDossier {
   valorTotalHomologado?: number;
   itens: ProcessDossierItem[];
   arquivos: ProcessDossierArquivo[];
+  atas: ProcessDossierAta[];
   /** True se conseguimos buscar dados oficiais ao vivo na API do PNCP. */
   liveData: boolean;
   warnings: string[];
