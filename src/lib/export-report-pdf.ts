@@ -714,6 +714,11 @@ function gatherAttachments(
 
 export interface ReportPlan {
   filename: string;
+  /**
+   * Recalcula o nome do arquivo no momento do download, lendo os metadados
+   * mais recentes do órgão/processo (que podem ter sido editados na prévia).
+   */
+  getFilename?: () => string;
   /** Lista plana de anexos candidatos (preview reflete `recommended` por padrão). */
   attachments: ReportAttachment[];
   /** Renderiza o PDF base (sem anexos externos) já com página final de "Fontes consultadas". */
