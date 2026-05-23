@@ -1067,8 +1067,9 @@ export function buildBasketReport(
           valign: "top",
           overflow: "linebreak",
           textColor: 20,
+          font: "Inter",
         },
-        headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: "normal" },
+        headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: "bold", font: "Inter" },
         alternateRowStyles: { fillColor: [248, 250, 252] },
         columnStyles: {
           0: { cellWidth: 22, halign: "right" },
