@@ -514,8 +514,9 @@ function drawItensTable(
       valign: "top",
       overflow: "linebreak",
       textColor: 20,
+      font: "Inter",
     },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 8, fontStyle: "normal" },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 8, fontStyle: "bold", font: "Inter" },
     bodyStyles: { fillColor: [255, 255, 255] },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     columnStyles: {
