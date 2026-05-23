@@ -12,6 +12,12 @@ import {
   saveBasket,
 } from "@/lib/baskets.functions";
 import { useBasket, replaceBasketItems, setActiveBasketId } from "@/lib/basket";
+import {
+  ThemeSelector,
+  getActiveThemeId,
+  setActiveThemeId,
+} from "@/components/ThemeSelector";
+import { useEffect } from "react";
 
 export const Route = createFileRoute("/_authenticated/cestas")({
   component: CestasPage,
@@ -31,6 +37,15 @@ function CestasPage() {
   const save = useServerFn(saveBasket);
   const basket = useBasket();
   const [newName, setNewName] = useState("");
+  const [activeTheme, setActiveTheme] = useState<string | null>(() =>
+    typeof window !== "undefined" ? getActiveThemeId() : null,
+  );
+
+  useEffect(() => {
+    const sync = () => setActiveTheme(getActiveThemeId());
+    window.addEventListener("petrus:theme:changed", sync);
+    return () => window.removeEventListener("petrus:theme:changed", sync);
+  }, []);
 
   const { data, isLoading } = useQuery({
     queryKey: ["baskets"],
@@ -43,6 +58,9 @@ function CestasPage() {
       if (row && Array.isArray(row.items)) {
         replaceBasketItems(row.items as never);
         setActiveBasketId(row.id);
+        // herda o tema da cesta carregada
+        const themeId = (row as { theme_id?: string | null }).theme_id ?? null;
+        setActiveThemeId(themeId);
       }
     },
   });
@@ -54,11 +72,22 @@ function CestasPage() {
 
   const saveMut = useMutation({
     mutationFn: (name: string) =>
-      save({ data: { name, items: basket.items as never } }),
+      save({
+        data: {
+          name,
+          items: basket.items as never,
+          themeId: activeTheme,
+        },
+      }),
     onSuccess: () => {
       setNewName("");
       qc.invalidateQueries({ queryKey: ["baskets"] });
     },
+  });
+
+  const filtered = (data ?? []).filter((b) => {
+    if (!activeTheme) return true;
+    return (b as { theme_id?: string | null }).theme_id === activeTheme;
   });
 
   return (
@@ -73,6 +102,16 @@ function CestasPage() {
           Cestas salvas na nuvem ficam disponíveis em qualquer dispositivo onde
           você entrar.
         </p>
+
+        <div className="mb-4">
+          <ThemeSelector
+            value={activeTheme}
+            onChange={(id) => {
+              setActiveTheme(id);
+              setActiveThemeId(id);
+            }}
+          />
+        </div>
 
         <div className="rounded-xl border border-border bg-card p-4 mb-6">
           <div className="text-sm font-medium mb-2">
@@ -118,13 +157,15 @@ function CestasPage() {
             <div className="p-8 text-center text-sm text-muted-foreground">
               Carregando…
             </div>
-          ) : !data || data.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">
-              Nenhuma cesta salva ainda.
+              {activeTheme
+                ? "Nenhuma cesta neste tema. Salve uma cesta com o tema selecionado para que ela apareça aqui."
+                : "Nenhuma cesta salva ainda."}
             </div>
           ) : (
             <ul className="divide-y divide-border">
-              {data.map((b) => (
+              {filtered.map((b) => (
                 <li
                   key={b.id}
                   className="flex items-center justify-between gap-3 px-4 py-3"
