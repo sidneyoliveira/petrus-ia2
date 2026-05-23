@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Trash2, ShoppingBasket, Download, Loader2, Upload } from "lucide-react";
+import { Trash2, ShoppingBasket, Download, Loader2, Upload, Package } from "lucide-react";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import {
@@ -17,7 +17,18 @@ import {
   getActiveThemeId,
   setActiveThemeId,
 } from "@/components/ThemeSelector";
+import { listThemes } from "@/lib/themes.functions";
+import { calculateBasketStats } from "@/lib/basket-stats";
 import { useEffect } from "react";
+
+function brl(v?: number | null) {
+  if (typeof v !== "number" || !Number.isFinite(v)) return "—";
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    maximumFractionDigits: 0,
+  }).format(v);
+}
 
 export const Route = createFileRoute("/_authenticated/cestas")({
   component: CestasPage,
@@ -51,6 +62,15 @@ function CestasPage() {
     queryKey: ["baskets"],
     queryFn: () => list(),
   });
+
+  const themesFn = useServerFn(listThemes);
+  const { data: themesData } = useQuery({
+    queryKey: ["themes"],
+    queryFn: () => themesFn(),
+  });
+  const themesById = new Map(
+    (themesData?.themes ?? []).map((t) => [t.id, t]),
+  );
 
   const loadMut = useMutation({
     mutationFn: (id: string) => load({ data: { id } }),
@@ -164,42 +184,113 @@ function CestasPage() {
                 : "Nenhuma cesta salva ainda."}
             </div>
           ) : (
-            <ul className="divide-y divide-border">
-              {filtered.map((b) => (
-                <li
-                  key={b.id}
-                  className="flex items-center justify-between gap-3 px-4 py-3"
-                >
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{b.name}</div>
-                    <div className="text-[11px] text-muted-foreground">
-                      {b.itemCount} itens · atualizada em{" "}
-                      {new Date(b.updated_at).toLocaleString("pt-BR")}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 p-3">
+              {filtered.map((b) => {
+                const themeId = (b as { theme_id?: string | null }).theme_id ?? null;
+                const theme = themeId ? themesById.get(themeId) : null;
+                const rawItems = Array.isArray((b as { items?: unknown }).items)
+                  ? ((b as { items: Array<{ item?: { valor?: number; id?: string }; quantidade?: number }> }).items)
+                  : [];
+                const totalEstimado = rawItems.reduce((sum, it) => {
+                  const v = typeof it?.item?.valor === "number" ? it.item.valor : 0;
+                  const q = typeof it?.quantidade === "number" ? it.quantidade : 0;
+                  return sum + v * q;
+                }, 0);
+                const stats = calculateBasketStats(
+                  rawItems
+                    .map((it) => ({
+                      id: it?.item?.id ?? "",
+                      valor: typeof it?.item?.valor === "number" ? it.item.valor : NaN,
+                    }))
+                    .filter((x) => Number.isFinite(x.valor) && x.id),
+                );
+                return (
+                  <div
+                    key={b.id}
+                    className="group relative rounded-xl border border-border bg-card p-4 hover:shadow-card transition-smooth flex flex-col"
+                  >
+                    {/* Faixa de tema */}
+                    <div
+                      className="absolute inset-x-0 top-0 h-1 rounded-t-xl"
+                      style={{ backgroundColor: theme?.color ?? "transparent" }}
+                    />
+                    <div className="flex items-start justify-between gap-2 mb-3">
+                      <div className="flex items-start gap-2 min-w-0">
+                        {theme?.icon ? (
+                          <span className="text-lg leading-none mt-0.5">{theme.icon}</span>
+                        ) : (
+                          <Package className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                        )}
+                        <div className="min-w-0">
+                          <div className="font-semibold text-sm truncate" title={b.name}>
+                            {b.name}
+                          </div>
+                          {theme && (
+                            <div
+                              className="text-[10px] font-medium uppercase tracking-wider"
+                              style={{ color: theme.color }}
+                            >
+                              {theme.name}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (confirm(`Excluir cesta "${b.name}"?`))
+                            delMut.mutate(b.id);
+                        }}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-destructive/10 hover:text-destructive shrink-0"
+                        title="Excluir"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
+
+                    {/* Métricas rápidas */}
+                    <div className="grid grid-cols-3 gap-2 text-center mb-3">
+                      <div>
+                        <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Itens</div>
+                        <div className="text-sm font-semibold tabular-nums">{b.itemCount}</div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Estimado</div>
+                        <div className="text-sm font-semibold tabular-nums text-accent truncate">
+                          {brl(totalEstimado)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] uppercase tracking-wider text-muted-foreground">CV</div>
+                        <div
+                          className={`text-sm font-semibold tabular-nums ${
+                            stats.n === 0
+                              ? "text-muted-foreground"
+                              : stats.homogeneo
+                                ? "text-success"
+                                : "text-destructive"
+                          }`}
+                        >
+                          {stats.n === 0 ? "—" : `${stats.coeficienteVariacao.toFixed(0)}%`}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-[10px] text-muted-foreground mb-3 flex-1">
+                      Atualizada em {new Date(b.updated_at).toLocaleString("pt-BR")}
+                    </div>
+
                     <Link
                       to="/cotacao"
                       onClick={() => loadMut.mutate(b.id)}
-                      className="inline-flex items-center gap-1.5 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-foreground hover:opacity-90"
+                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-foreground hover:opacity-90 transition-smooth"
                     >
                       <Download className="h-3.5 w-3.5" />
-                      Carregar
+                      Carregar na cotação
                     </Link>
-                    <button
-                      onClick={() => {
-                        if (confirm(`Excluir cesta "${b.name}"?`))
-                          delMut.mutate(b.id);
-                      }}
-                      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border hover:bg-destructive/10 hover:text-destructive"
-                      title="Excluir"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
                   </div>
-                </li>
-              ))}
-            </ul>
+                );
+              })}
+            </div>
           )}
         </div>
       </main>

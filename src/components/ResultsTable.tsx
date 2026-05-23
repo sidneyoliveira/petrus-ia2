@@ -20,6 +20,7 @@ import {
 import type { PriceResult } from "@/lib/types";
 import { buildHighlightUrl } from "@/lib/highlight-source";
 import { CorrectionDialog } from "@/components/CorrectionDialog";
+import { MathStatusIndicator } from "@/components/MathStatusIndicator";
 
 function brl(v?: number | null) {
   if (typeof v !== "number") return "—";
@@ -79,6 +80,7 @@ export function ResultsTable({
               <TableHead className="w-24 text-right">Qtd</TableHead>
               <TableHead className="w-32 text-right">Unitário</TableHead>
               <TableHead className="w-32 text-right">Total</TableHead>
+              <TableHead className="w-20 text-center">Mat.</TableHead>
               <TableHead className="min-w-[180px]">Órgão / UF</TableHead>
               <TableHead className="w-28">Data</TableHead>
               <TableHead className="min-w-[180px]">Fornecedor</TableHead>
@@ -150,6 +152,16 @@ export function ResultsTable({
                     <TableCell className="text-right tabular-nums text-sm">
                       {brl(item.valorTotal ?? item.valorTotalCalculado)}
                     </TableCell>
+                    <TableCell className="text-center">
+                      <MathStatusIndicator
+                        status={item.mathStatus}
+                        delta={item.mathDeltaPct}
+                        quantidade={item.quantidade}
+                        valor={item.valor}
+                        valorTotal={item.valorTotal}
+                        compact
+                      />
+                    </TableCell>
                     <TableCell className="text-xs">
                       <div className="line-clamp-2" title={item.orgao}>
                         {item.orgao || "—"}
@@ -185,7 +197,7 @@ export function ResultsTable({
                   </TableRow>
                   {isOpen && (
                     <TableRow className="bg-muted/20 hover:bg-muted/20">
-                      <TableCell colSpan={11} className="p-5">
+                      <TableCell colSpan={12} className="p-5">
                         <div className="grid md:grid-cols-[1fr_auto] gap-4">
                           <div className="min-w-0">
                             <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">

@@ -15,6 +15,8 @@ import {
   getActiveThemeId,
   setActiveThemeId,
 } from "@/components/ThemeSelector";
+import { calculateBasketStats } from "@/lib/basket-stats";
+import { CheckCircle2, AlertTriangle } from "lucide-react";
 
 export const Route = createFileRoute("/cotacao")({
   component: CotacaoPage,
@@ -94,6 +96,17 @@ function CotacaoPage() {
       : 0;
     return { rows, totalGeral, comUnitario, media, mediana };
   }, [items]);
+
+  /** Estatísticas IN 65/2021 (CV, outliers, recomendação). */
+  const stats = useMemo(
+    () =>
+      calculateBasketStats(
+        items
+          .map((b) => ({ id: b.item.id, valor: b.item.valor }))
+          .filter((x): x is { id: string; valor: number } => typeof x.valor === "number"),
+      ),
+    [items],
+  );
 
   const exportCotacaoCSV = () => {
     const headers = [
@@ -290,11 +303,48 @@ function CotacaoPage() {
             </div>
           ) : (
             <>
-              <div className="mb-4 grid grid-cols-2 md:grid-cols-4 gap-2 rounded-xl border border-border bg-card p-3">
-                <Stat label="Itens" value={String(items.length)} />
-                <Stat label="Total geral" value={brl(totals.totalGeral)} accent />
-                <Stat label="Média unitária" value={brl(totals.media)} />
-                <Stat label="Mediana unitária" value={brl(totals.mediana)} />
+              <div
+                className={`mb-4 rounded-xl border p-4 transition-colors ${
+                  stats.n === 0
+                    ? "border-border bg-card"
+                    : stats.homogeneo
+                      ? "border-success/30 bg-success/5"
+                      : "border-destructive/30 bg-destructive/5"
+                }`}
+              >
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                  <Stat label="Itens" value={String(items.length)} />
+                  <Stat label="Total geral" value={brl(totals.totalGeral)} accent />
+                  <Stat label="Média" value={brl(stats.media || totals.media)} />
+                  <Stat label="Mediana" value={brl(stats.mediana || totals.mediana)} />
+                  <Stat label="Desvio" value={brl(stats.desvio)} />
+                  <Stat
+                    label="CV (IN 65/2021)"
+                    value={`${stats.coeficienteVariacao.toFixed(1)} %`}
+                    tone={stats.n === 0 ? "neutral" : stats.homogeneo ? "success" : "danger"}
+                  />
+                </div>
+                {stats.n > 0 && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/40 pt-3 text-xs">
+                    {stats.homogeneo ? (
+                      <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
+                    ) : (
+                      <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
+                    )}
+                    <span
+                      className={`font-medium ${
+                        stats.homogeneo ? "text-success" : "text-destructive"
+                      }`}
+                    >
+                      {stats.recomendacao}
+                    </span>
+                    {stats.outliers.length > 0 && (
+                      <span className="text-muted-foreground">
+                        · {stats.outliers.length} outlier(s) excluído(s) do cálculo
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="rounded-xl border border-border bg-card overflow-hidden shadow-card">
@@ -388,11 +438,29 @@ function CotacaoPage() {
   );
 }
 
-function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function Stat({
+  label,
+  value,
+  accent,
+  tone,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+  tone?: "neutral" | "success" | "danger";
+}) {
+  const toneCls =
+    tone === "success"
+      ? "text-success"
+      : tone === "danger"
+        ? "text-destructive"
+        : accent
+          ? "text-accent"
+          : "";
   return (
     <div className="min-w-0">
       <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
-      <div className={`text-base font-semibold tabular-nums truncate ${accent ? "text-accent" : ""}`} title={value}>{value}</div>
+      <div className={`text-base font-semibold tabular-nums truncate ${toneCls}`} title={value}>{value}</div>
     </div>
   );
 }
