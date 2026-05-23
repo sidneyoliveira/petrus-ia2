@@ -48,10 +48,10 @@ export const updateTheme = createServerFn({ method: "POST" })
       .parse(d),
   )
   .handler(async ({ data, context }) => {
-    const patch: Record<string, unknown> = {};
+    const patch: { name?: string; color?: string; icon?: string | null } = {};
     if (data.name !== undefined) patch.name = data.name;
     if (data.color !== undefined) patch.color = data.color;
-    if (data.icon !== undefined) patch.icon = data.icon;
+    if (data.icon !== undefined) patch.icon = data.icon ?? null;
     const { data: row, error } = await context.supabase
       .from("search_themes")
       .update(patch)
