@@ -1,26 +1,32 @@
 /**
- * Gerador de relatórios técnicos (PDF) para uso em processos de cotação
- * conforme Lei 14.133/2021 e IN SEGES/ME 65/2021.
+ * Gerador de relatórios técnicos (PDF) — Lei 14.133/2021 e IN SEGES/ME 65/2021.
  *
- * Dois formatos:
- *  - exportItemReportPdf:    1 item específico + espelho do processo de origem
- *  - exportProcessReportPdf: todos os itens do processo (preferência legal
- *                            do art. 23 §1º I — PNCP)
+ * Arquitetura:
+ *  1. buildXxxReport(input)  -> ReportPlan   (síncrono, fast)
+ *     - calcula candidatos a anexo (edital/atas/contratos) com flag recommended
+ *     - expõe renderBase(selectedUrls) que devolve o PDF base como Uint8Array
+ *  2. finalizeReportPdf(plan, selectedUrls) -> Blob
+ *     - chama renderBase(selectedUrls) (inclui página final de fontes)
+ *     - baixa PDFs do PNCP e mescla com pdf-lib
  *
- * Layout A4 retrato, margens 40pt, quebra de página automática via autoTable.
- * QR Code embutido apontando para a URL canônica da fonte (defensável
- * juridicamente: o auditor pode validar o vínculo entre o PDF e a fonte
- * oficial).
+ * Fluxo no UI:
+ *  - Dialog de prévia mostra renderBase(allRecommended) num iframe
+ *  - Usuário marca/desmarca anexos; ao baixar, finalize é chamado
  */
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import QRCode from "qrcode";
 import { PDFDocument } from "pdf-lib";
 import type { PriceResult } from "./types";
-import type { ProcessDossier, ProcessDossierItem, ProcessDossierAta } from "./report.functions";
+import type {
+  ProcessDossier,
+  ProcessDossierItem,
+  ProcessDossierAta,
+  ProcessDossierContrato,
+} from "./report.functions";
 import { fetchPncpDocument } from "./report.functions";
 
-// ---------------------- helpers ----------------------
+// ---------------------- constants & utils ----------------------
 
 const MARGIN = 40;
 const COLOR_TITLE: [number, number, number] = [15, 23, 42];
@@ -30,10 +36,7 @@ const COLOR_RULE: [number, number, number] = [220, 220, 220];
 
 function brl(v?: number | null) {
   if (typeof v !== "number" || !Number.isFinite(v)) return "—";
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(v);
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
 }
 function num(v?: number | null) {
   if (typeof v !== "number" || !Number.isFinite(v)) return "—";
@@ -70,7 +73,7 @@ interface RenderCtx {
 }
 
 function ensureSpace(ctx: RenderCtx, needed: number) {
-  if (ctx.y + needed > ctx.pageH - MARGIN - 24 /* footer */) {
+  if (ctx.y + needed > ctx.pageH - MARGIN - 24) {
     ctx.doc.addPage();
     ctx.y = MARGIN;
   }
@@ -87,6 +90,8 @@ function setText(
   doc.setTextColor(...color);
 }
 
+// ---------------------- desenho de blocos ----------------------
+
 function drawHeader(ctx: RenderCtx, subtitle: string) {
   const { doc, pageW } = ctx;
   setText(doc, 14, "bold", COLOR_TITLE);
@@ -97,10 +102,8 @@ function drawHeader(ctx: RenderCtx, subtitle: string) {
     MARGIN,
     64,
   );
-  // Subtítulo (tipo do relatório)
   setText(doc, 10, "bold", COLOR_ACCENT);
   doc.text(subtitle, MARGIN, 82);
-  // régua
   doc.setDrawColor(...COLOR_RULE);
   doc.setLineWidth(0.6);
   doc.line(MARGIN, 90, pageW - MARGIN, 90);
@@ -158,10 +161,6 @@ function drawParagraph(ctx: RenderCtx, label: string, text?: string | null) {
   ctx.y += 6;
 }
 
-/**
- * Card principal: dados do processo + QR Code da fonte oficial.
- * Substitui o antigo "Espelho do edital" + "Fonte oficial" em um único bloco.
- */
 async function drawProcessoCard(
   ctx: RenderCtx,
   d: ProcessDossier | null,
@@ -172,7 +171,6 @@ async function drawProcessoCard(
   const boxW = pageW - MARGIN * 2;
   const url = d?.urlCanonica || fallback.url;
 
-  // Pré-calcula objeto (full width abaixo) pra dimensionar o card
   const objeto = (d?.objetoCompra || "").trim();
   const objetoLines = objeto
     ? doc.splitTextToSize(objeto, boxW - 28).slice(0, 6)
@@ -186,7 +184,6 @@ async function drawProcessoCard(
   doc.setFillColor(248, 250, 252);
   doc.roundedRect(boxX, boxY, boxW, boxH, 6, 6, "FD");
 
-  // QR (direita)
   let qrSize = 90;
   if (url) {
     try {
@@ -214,12 +211,10 @@ async function drawProcessoCard(
     qrSize = 0;
   }
 
-  // Coluna esquerda: dados do processo
   const leftX = boxX + 14;
   const leftMaxW = boxW - 28 - (qrSize ? qrSize + 16 : 0);
   let y = boxY + 22;
 
-  // Cabeçalho do card: órgão + nº/ano
   setText(doc, 7, "bold", COLOR_ACCENT);
   doc.text("PROCESSO LICITATÓRIO", leftX, y);
   y += 12;
@@ -231,7 +226,6 @@ async function drawProcessoCard(
   doc.text(orgaoLines.slice(0, 2), leftX, y);
   y += Math.min(orgaoLines.length, 2) * 13 + 4;
 
-  // Grid de 2 colunas com dados-chave
   const pairs: Array<[string, string]> = [];
   if (d?.sequencial && d?.ano) pairs.push(["Nº / Ano", `${d.sequencial}/${d.ano}`]);
   if (d?.modalidade) pairs.push(["Modalidade", d.modalidade]);
@@ -255,7 +249,6 @@ async function drawProcessoCard(
     y += 22;
   }
 
-  // URL canônica (linha clicável discreta)
   if (url) {
     setText(doc, 7, "normal", COLOR_ACCENT);
     const urlLines = doc.splitTextToSize(url, leftMaxW);
@@ -263,7 +256,6 @@ async function drawProcessoCard(
     doc.link(leftX, boxY + baseH - 24, leftMaxW, 20, { url });
   }
 
-  // Objeto (full width abaixo)
   if (objetoLines.length > 0) {
     const oy = boxY + baseH + 4;
     setText(doc, 6.5, "bold", COLOR_MUTED);
@@ -310,32 +302,6 @@ function drawFundamentacao(ctx: RenderCtx) {
     ctx.y += 13;
   }
   ctx.y += 4;
-}
-
-function drawArquivos(ctx: RenderCtx, arquivos: ProcessDossier["arquivos"]) {
-  if (!arquivos || arquivos.length === 0) {
-    return;
-  }
-  drawSectionTitle(ctx, "Documentos oficiais da fonte");
-  for (const a of arquivos) {
-    ensureSpace(ctx, 22);
-    setText(ctx.doc, 9, "bold", [0, 0, 0]);
-    ctx.doc.text(`• ${a.titulo}`, MARGIN, ctx.y);
-    setText(ctx.doc, 8, "normal", COLOR_MUTED);
-    ctx.doc.text(
-      [a.tipo, a.data ? fmtDate(a.data) : null].filter(Boolean).join(" · "),
-      MARGIN + 12,
-      ctx.y + 11,
-    );
-    // link clicável
-    const urlLines = ctx.doc.splitTextToSize(a.url, ctx.pageW - MARGIN * 2 - 12);
-    setText(ctx.doc, 8, "normal", COLOR_ACCENT);
-    ctx.doc.text(urlLines.slice(0, 1), MARGIN + 12, ctx.y + 22);
-    ctx.doc.link(MARGIN + 12, ctx.y + 14, ctx.pageW - MARGIN * 2 - 12, 12, {
-      url: a.url,
-    });
-    ctx.y += 30;
-  }
 }
 
 function drawValores(ctx: RenderCtx, d: ProcessDossier) {
@@ -407,7 +373,7 @@ function drawItensTable(
         data.section === "body" &&
         highlightNumeros.has(Number((data.row.raw as string[])[0]))
       ) {
-        data.cell.styles.fillColor = [254, 243, 199]; // amber-100
+        data.cell.styles.fillColor = [254, 243, 199];
         data.cell.styles.fontStyle = "bold";
       }
     },
@@ -416,131 +382,582 @@ function drawItensTable(
   ctx.y = (ctx.doc.lastAutoTable?.finalY ?? ctx.y) + 12;
 }
 
-function drawWarnings(ctx: RenderCtx, warnings: string[]) {
-  if (!warnings.length) return;
-  drawSectionTitle(ctx, "Observações");
-  setText(ctx.doc, 8, "normal", COLOR_MUTED);
-  for (const w of warnings) {
-    ensureSpace(ctx, 14);
-    const lines = ctx.doc.splitTextToSize(`• ${w}`, ctx.pageW - MARGIN * 2);
-    for (const l of lines) {
-      ensureSpace(ctx, 12);
-      ctx.doc.text(l, MARGIN, ctx.y);
-      ctx.y += 11;
+function drawContratosResumo(ctx: RenderCtx, contratos: ProcessDossierContrato[]) {
+  if (!contratos || contratos.length === 0) return;
+  drawSectionTitle(ctx, `Contratos firmados (${contratos.length})`);
+  for (const c of contratos) {
+    ensureSpace(ctx, 36);
+    setText(ctx.doc, 9, "bold", [0, 0, 0]);
+    ctx.doc.text(
+      `Contrato ${c.numeroContrato ?? "—"}${c.fornecedor ? ` · ${c.fornecedor}` : ""}`,
+      MARGIN,
+      ctx.y,
+    );
+    ctx.y += 12;
+    setText(ctx.doc, 8, "normal", COLOR_MUTED);
+    const parts = [
+      c.cnpjFornecedor ? `CNPJ ${fmtCnpj(c.cnpjFornecedor)}` : null,
+      typeof c.valorInicial === "number" ? `Valor ${brl(c.valorInicial)}` : null,
+      c.vigenciaInicio || c.vigenciaFim
+        ? `Vigência ${fmtDate(c.vigenciaInicio)} → ${fmtDate(c.vigenciaFim)}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join("  ·  ");
+    if (parts) {
+      ctx.doc.text(parts, MARGIN, ctx.y);
+      ctx.y += 12;
     }
+    ctx.y += 4;
   }
-  ctx.y += 4;
 }
 
-// ---------------------- API pública ----------------------
+// ---------------------- ReportAttachment ----------------------
 
-/**
- * Decide quais atas anexar com base na descrição do item.
- * Se nada bate, devolve TODAS as atas (best-effort).
- */
+export type AttachmentCategory = "edital" | "ata" | "contrato" | "outro";
+
+export interface ReportAttachment {
+  /** estável — chave para seleção */
+  id: string;
+  titulo: string;
+  tipo: string;
+  url: string;
+  category: AttachmentCategory;
+  /** marcado por padrão na UI */
+  recommended: boolean;
+  /** rótulo agrupador, ex.: "Processo", "Ata 1/2026", "Contrato 17/2026" */
+  grupo: string;
+}
+
+function categorize(tipo: string, titulo: string): AttachmentCategory {
+  const t = `${tipo} ${titulo}`.toLowerCase();
+  if (/contrato/.test(t)) return "contrato";
+  if (/\bata\b|registro de pre/.test(t)) return "ata";
+  if (/edital|termo de refer|anexo/.test(t)) return "edital";
+  return "outro";
+}
+
 function pickRelevantAtas(
   atas: ProcessDossierAta[],
   itemDescricao?: string,
-): ProcessDossierAta[] {
-  if (!atas || atas.length === 0) return [];
-  if (!itemDescricao || itemDescricao.length < 6) return atas;
+): Set<string> {
+  // devolve numeros de ata "relevantes" (que contêm o item buscado)
+  const out = new Set<string>();
+  if (!atas || atas.length === 0 || !itemDescricao || itemDescricao.length < 6) return out;
   const needle = itemDescricao.toLowerCase().slice(0, 60);
-  const filtered = atas.filter((a) =>
-    a.itens.some((it) => it.descricao.toLowerCase().includes(needle)),
-  );
-  return filtered.length > 0 ? filtered : atas;
+  for (const a of atas) {
+    if (a.itens.some((it) => it.descricao.toLowerCase().includes(needle))) {
+      out.add(String(a.numeroAta ?? ""));
+    }
+  }
+  return out;
 }
 
 /**
- * Anexa PDFs externos (edital + atas selecionadas) ao final do doc jsPDF,
- * gerando um único PDF mesclado via pdf-lib. Adiciona uma página separadora
- * antes de cada documento embutido.
+ * Constrói a lista de anexos candidatos para um dossier.
+ * recommended: por padrão Ata + Contrato; Edital só fica recomendado em relatórios
+ * de processo inteiro (não na visão de item, pra evitar PDFs gigantes).
  */
-async function mergeWithExternalPdfs(
-  jsPdfDoc: jsPDF,
-  attachments: Array<{ titulo: string; tipo: string; url: string }>,
-  filename: string,
-) {
-  const pageW = jsPdfDoc.internal.pageSize.getWidth();
-  const pageH = jsPdfDoc.internal.pageSize.getHeight();
+function gatherAttachments(
+  dossier: ProcessDossier | null,
+  opts: { mode: "item" | "process" | "basket"; itemDescricao?: string },
+): ReportAttachment[] {
+  if (!dossier) return [];
+  const atasRelevantes = pickRelevantAtas(dossier.atas, opts.itemDescricao);
+  const wantEdital = opts.mode === "process"; // só processo completo recomenda edital
+  const out: ReportAttachment[] = [];
 
-  // Sem anexos? Apenas salva (com rodapé).
-  if (attachments.length === 0) {
-    drawFooter(jsPdfDoc, pageW, pageH);
-    jsPdfDoc.save(filename);
+  // arquivos do processo (geralmente edital + termo de referência)
+  for (const a of dossier.arquivos) {
+    const cat = categorize(a.tipo, a.titulo);
+    out.push({
+      id: `proc:${a.url}`,
+      titulo: a.titulo,
+      tipo: a.tipo,
+      url: a.url,
+      category: cat,
+      grupo: "Processo",
+      recommended: cat === "edital" ? wantEdital : true,
+    });
+  }
+
+  // atas
+  for (const ata of dossier.atas) {
+    const grupo = `Ata ${ata.numeroAta ?? ""}`.trim();
+    const isRelevant =
+      opts.mode !== "item" || atasRelevantes.size === 0
+        ? true
+        : atasRelevantes.has(String(ata.numeroAta ?? ""));
+    for (const a of ata.arquivos) {
+      out.push({
+        id: `ata:${ata.numeroAta}:${a.url}`,
+        titulo: a.titulo,
+        tipo: a.tipo,
+        url: a.url,
+        category: "ata",
+        grupo,
+        recommended: isRelevant,
+      });
+    }
+  }
+
+  // contratos
+  for (const c of dossier.contratos || []) {
+    const grupo = `Contrato ${c.numeroContrato ?? ""}`.trim();
+    for (const a of c.arquivos) {
+      out.push({
+        id: `contrato:${c.numeroContrato}:${a.url}`,
+        titulo: a.titulo,
+        tipo: a.tipo,
+        url: a.url,
+        category: "contrato",
+        grupo,
+        recommended: true,
+      });
+    }
+  }
+
+  // dedupe por url
+  const seen = new Set<string>();
+  return out.filter((a) => (seen.has(a.url) ? false : (seen.add(a.url), true)));
+}
+
+// ---------------------- ReportPlan ----------------------
+
+export interface ReportPlan {
+  filename: string;
+  /** Lista plana de anexos candidatos (preview reflete `recommended` por padrão). */
+  attachments: ReportAttachment[];
+  /** Renderiza o PDF base (sem anexos externos) já com página final de "Fontes consultadas". */
+  renderBase: (selectedUrls: Set<string>) => Promise<Uint8Array>;
+}
+
+/** Página final de fontes consultadas — lista compacta clicável dos anexos selecionados. */
+function drawFontesPage(
+  ctx: RenderCtx,
+  selected: ReportAttachment[],
+  dossierUrl?: string,
+) {
+  ctx.doc.addPage();
+  ctx.y = MARGIN;
+  drawHeader(ctx, "Fontes consultadas");
+  setText(ctx.doc, 9, "normal", [0, 0, 0]);
+  drawParagraph(
+    ctx,
+    "Verificabilidade",
+    "Todos os documentos abaixo foram obtidos da fonte oficial (PNCP). " +
+      "Os anexos marcados pelo usuário também foram mesclados ao final deste PDF " +
+      "e podem ser conferidos diretamente nos links a seguir.",
+  );
+
+  if (dossierUrl) {
+    drawSectionTitle(ctx, "Fonte canônica do processo");
+    setText(ctx.doc, 8, "normal", COLOR_ACCENT);
+    const lines = ctx.doc.splitTextToSize(dossierUrl, ctx.pageW - MARGIN * 2);
+    ensureSpace(ctx, lines.length * 11 + 6);
+    ctx.doc.text(lines, MARGIN, ctx.y);
+    ctx.doc.link(MARGIN, ctx.y - 8, ctx.pageW - MARGIN * 2, lines.length * 11 + 4, {
+      url: dossierUrl,
+    });
+    ctx.y += lines.length * 11 + 8;
+  }
+
+  if (selected.length === 0) {
+    drawSectionTitle(ctx, "Documentos anexados");
+    setText(ctx.doc, 9, "normal", COLOR_MUTED);
+    ensureSpace(ctx, 14);
+    ctx.doc.text("Nenhum anexo selecionado.", MARGIN, ctx.y);
     return;
   }
 
-  // Baixa todos em paralelo (com limite leve via Promise.all — atas/editais são poucos)
-  const fetched = await Promise.all(
-    attachments.map(async (a) => {
+  // agrupa por grupo
+  const grupos = new Map<string, ReportAttachment[]>();
+  for (const a of selected) {
+    const arr = grupos.get(a.grupo) ?? [];
+    arr.push(a);
+    grupos.set(a.grupo, arr);
+  }
+
+  drawSectionTitle(ctx, `Documentos anexados (${selected.length})`);
+  for (const [grupo, arr] of grupos) {
+    ensureSpace(ctx, 18);
+    setText(ctx.doc, 9, "bold", COLOR_TITLE);
+    ctx.doc.text(grupo, MARGIN, ctx.y);
+    ctx.y += 12;
+    for (const a of arr) {
+      ensureSpace(ctx, 26);
+      setText(ctx.doc, 8, "bold", [0, 0, 0]);
+      const titleLines = ctx.doc.splitTextToSize(
+        `• ${a.titulo}`,
+        ctx.pageW - MARGIN * 2 - 8,
+      );
+      ctx.doc.text(titleLines.slice(0, 2), MARGIN + 8, ctx.y);
+      ctx.y += titleLines.length * 10;
+      setText(ctx.doc, 7, "normal", COLOR_MUTED);
+      ctx.doc.text(`Tipo: ${a.tipo}`, MARGIN + 16, ctx.y);
+      ctx.y += 9;
+      setText(ctx.doc, 7, "normal", COLOR_ACCENT);
+      const urlLines = ctx.doc.splitTextToSize(a.url, ctx.pageW - MARGIN * 2 - 16);
+      ctx.doc.text(urlLines.slice(0, 2), MARGIN + 16, ctx.y);
+      ctx.doc.link(MARGIN + 16, ctx.y - 8, ctx.pageW - MARGIN * 2 - 16, urlLines.length * 10, {
+        url: a.url,
+      });
+      ctx.y += urlLines.length * 9 + 6;
+    }
+    ctx.y += 4;
+  }
+}
+
+// ---------------------- builders ----------------------
+
+export function buildItemReport(
+  item: PriceResult,
+  dossier: ProcessDossier | null,
+): ReportPlan {
+  const itemDescricao = item.objetoEstruturado || item.titulo;
+  const attachments = gatherAttachments(dossier, { mode: "item", itemDescricao });
+  const filename = `relatorio-item-${slug(itemDescricao)}.pdf`;
+
+  return {
+    filename,
+    attachments,
+    renderBase: async (selectedUrls) => {
+      const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+      const ctx: RenderCtx = {
+        doc,
+        pageW: doc.internal.pageSize.getWidth(),
+        pageH: doc.internal.pageSize.getHeight(),
+        y: 0,
+      };
+
+      drawHeader(ctx, "Relatório de item — pesquisa de preço unitário");
+      await drawProcessoCard(ctx, dossier, {
+        origem: dossier?.origem || item.origem,
+        url: dossier?.urlCanonica || item.url,
+      });
+
+      drawSectionTitle(ctx, "Item pesquisado");
+      drawParagraph(ctx, "Descrição do item", itemDescricao);
+      drawKeyValueGrid(
+        ctx,
+        [
+          ["Unidade", item.unidade?.toUpperCase()],
+          [
+            "Quantidade contratada",
+            typeof item.quantidade === "number" ? num(item.quantidade) : undefined,
+          ],
+          ["Valor unitário", brl(item.valor)],
+          ["Valor total do item", brl(item.valorTotal)],
+          ["Fornecedor", item.fornecedor],
+          ["CNPJ do fornecedor", item.cnpj ? fmtCnpj(item.cnpj) : undefined],
+          [
+            "Procedência do valor",
+            item.valorTipo === "unitario_homologado"
+              ? "Unitário homologado"
+              : item.valorTipo === "unitario_estimado"
+                ? "Unitário estimado"
+                : item.valorTipo === "global"
+                  ? "Valor TOTAL do processo (não unitário)"
+                  : "Sem contexto",
+          ],
+          ["Homologação", item.homologado ? "Sim — item homologado" : "Não confirmada"],
+        ],
+        2,
+      );
+
+      if (dossier) {
+        drawValores(ctx, dossier);
+        drawContratosResumo(ctx, dossier.contratos);
+        if (dossier.itens.length > 0) {
+          drawSectionTitle(
+            ctx,
+            `Demais itens do mesmo processo (${dossier.itens.length})`,
+          );
+          const highlight = new Set<number>();
+          const desc = itemDescricao.toLowerCase().slice(0, 40);
+          for (const it of dossier.itens) {
+            if (it.descricao.toLowerCase().includes(desc) && desc.length >= 10) {
+              highlight.add(it.numeroItem);
+            }
+          }
+          drawItensTable(ctx, dossier.itens, highlight);
+        }
+      }
+
+      drawFundamentacao(ctx);
+
+      // Página final: fontes (somente selecionados)
+      const selected = attachments.filter((a) => selectedUrls.has(a.url));
+      drawFontesPage(ctx, selected, dossier?.urlCanonica);
+
+      drawFooter(doc, ctx.pageW, ctx.pageH);
+      return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
+    },
+  };
+}
+
+export function buildProcessReport(
+  dossier: ProcessDossier,
+  opts: { highlightItem?: number } = {},
+): ReportPlan {
+  const attachments = gatherAttachments(dossier, { mode: "process" });
+  const orgaoSlug = slug(dossier.orgao || "processo");
+  const filename = `relatorio-processo-${orgaoSlug}-${dossier.ano ?? ""}-${dossier.sequencial ?? ""}.pdf`;
+
+  return {
+    filename,
+    attachments,
+    renderBase: async (selectedUrls) => {
+      const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+      const ctx: RenderCtx = {
+        doc,
+        pageW: doc.internal.pageSize.getWidth(),
+        pageH: doc.internal.pageSize.getHeight(),
+        y: 0,
+      };
+
+      drawHeader(ctx, "Relatório consolidado do processo");
+      await drawProcessoCard(ctx, dossier, {
+        origem: dossier.origem,
+        url: dossier.urlCanonica,
+      });
+      drawValores(ctx, dossier);
+      drawContratosResumo(ctx, dossier.contratos);
+
+      if (dossier.itens.length > 0) {
+        drawSectionTitle(ctx, `Itens do processo (${dossier.itens.length})`);
+        const highlight =
+          opts.highlightItem !== undefined ? new Set([opts.highlightItem]) : undefined;
+        drawItensTable(ctx, dossier.itens, highlight);
+      }
+
+      drawFundamentacao(ctx);
+
+      const selected = attachments.filter((a) => selectedUrls.has(a.url));
+      drawFontesPage(ctx, selected, dossier.urlCanonica);
+
+      drawFooter(doc, ctx.pageW, ctx.pageH);
+      return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
+    },
+  };
+}
+
+export interface BasketReportRow {
+  item: PriceResult;
+  quantidadeCotada: number;
+  dossier: ProcessDossier | null;
+}
+
+export function buildBasketReport(
+  rows: BasketReportRow[],
+  totals: { totalGeral: number; media: number; mediana: number },
+): ReportPlan {
+  // Anexos: união por processo (modo basket — recommend tudo exceto edital)
+  const all: ReportAttachment[] = [];
+  const seenProc = new Set<string>();
+  for (const r of rows) {
+    if (!r.dossier) continue;
+    const k =
+      r.dossier.urlCanonica ||
+      `${r.dossier.cnpj}-${r.dossier.ano}-${r.dossier.sequencial}`;
+    if (seenProc.has(k)) continue;
+    seenProc.add(k);
+    all.push(
+      ...gatherAttachments(r.dossier, {
+        mode: "basket",
+        itemDescricao: r.item.objetoEstruturado || r.item.titulo,
+      }),
+    );
+  }
+  // dedupe por url
+  const seen = new Set<string>();
+  const attachments = all.filter((a) =>
+    seen.has(a.url) ? false : (seen.add(a.url), true),
+  );
+  // Em cesta, edital também fica desmarcado por padrão (volume!)
+  for (const a of attachments) {
+    if (a.category === "edital") a.recommended = false;
+  }
+
+  const date = new Date().toISOString().slice(0, 10);
+  const filename = `cesta-cotacao-${date}.pdf`;
+
+  return {
+    filename,
+    attachments,
+    renderBase: async (selectedUrls) => {
+      const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+      const ctx: RenderCtx = {
+        doc,
+        pageW: doc.internal.pageSize.getWidth(),
+        pageH: doc.internal.pageSize.getHeight(),
+        y: 0,
+      };
+
+      drawHeader(ctx, "Cesta de cotação — Nota Técnica de pesquisa de preços");
+
+      drawSectionTitle(ctx, "Resumo da cesta");
+      drawKeyValueGrid(
+        ctx,
+        [
+          ["Itens cotados", String(rows.length)],
+          ["Total geral", brl(totals.totalGeral)],
+          ["Média unitária", brl(totals.media)],
+          ["Mediana unitária", brl(totals.mediana)],
+        ],
+        4,
+      );
+
+      drawSectionTitle(ctx, "Itens consolidados");
+      ensureSpace(ctx, 40);
+      autoTable(doc, {
+        startY: ctx.y,
+        margin: { left: MARGIN, right: MARGIN },
+        head: [["#", "Item", "Un.", "Qtd", "Unitário", "Subtotal", "Fonte"]],
+        body: rows.map((r, i) => {
+          const unit = typeof r.item.valor === "number" ? r.item.valor : null;
+          const sub = unit !== null ? unit * r.quantidadeCotada : null;
+          return [
+            String(i + 1),
+            r.item.objetoEstruturado || r.item.titulo,
+            (r.item.unidade || "—").toUpperCase(),
+            String(r.quantidadeCotada),
+            brl(unit),
+            brl(sub),
+            [r.item.origem, r.item.orgao].filter(Boolean).join(" · "),
+          ];
+        }),
+        foot: [[
+          "",
+          "",
+          "",
+          "",
+          { content: "Total geral", styles: { halign: "right", fontStyle: "bold" } },
+          { content: brl(totals.totalGeral), styles: { halign: "right", fontStyle: "bold" } },
+          "",
+        ]],
+        styles: {
+          fontSize: 8,
+          cellPadding: 4,
+          valign: "top",
+          overflow: "linebreak",
+          textColor: 20,
+        },
+        headStyles: { fillColor: [30, 41, 59], textColor: 255 },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        columnStyles: {
+          0: { cellWidth: 22, halign: "right" },
+          1: { cellWidth: "auto" },
+          2: { cellWidth: 28, halign: "center" },
+          3: { cellWidth: 40, halign: "right" },
+          4: { cellWidth: 70, halign: "right" },
+          5: { cellWidth: 75, halign: "right" },
+          6: { cellWidth: 110 },
+        },
+      });
+      // @ts-expect-error lastAutoTable
+      ctx.y = (doc.lastAutoTable?.finalY ?? ctx.y) + 16;
+
+      // Espelho de cada processo distinto
+      const seenP = new Set<string>();
+      for (const r of rows) {
+        const d = r.dossier;
+        if (!d) continue;
+        const key = d.urlCanonica || `${d.cnpj}-${d.ano}-${d.sequencial}`;
+        if (seenP.has(key)) continue;
+        seenP.add(key);
+
+        doc.addPage();
+        ctx.y = MARGIN;
+        drawHeader(ctx, "Espelho do processo");
+        await drawProcessoCard(ctx, d, { origem: d.origem, url: d.urlCanonica });
+        drawValores(ctx, d);
+        drawContratosResumo(ctx, d.contratos);
+        if (d.itens.length > 0) {
+          drawSectionTitle(ctx, `Itens do processo (${d.itens.length})`);
+          const highlight = new Set<number>();
+          const desc = (r.item.objetoEstruturado || r.item.titulo || "")
+            .toLowerCase()
+            .slice(0, 40);
+          for (const it of d.itens) {
+            if (it.descricao.toLowerCase().includes(desc) && desc.length >= 10) {
+              highlight.add(it.numeroItem);
+            }
+          }
+          drawItensTable(ctx, d.itens, highlight);
+        }
+      }
+
+      doc.addPage();
+      ctx.y = MARGIN;
+      drawHeader(ctx, "Encerramento");
+      drawFundamentacao(ctx);
+
+      const selected = attachments.filter((a) => selectedUrls.has(a.url));
+      drawFontesPage(ctx, selected, undefined);
+
+      drawFooter(doc, ctx.pageW, ctx.pageH);
+      return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
+    },
+  };
+}
+
+// ---------------------- finalize: baixar PDFs + mesclar ----------------------
+
+export interface FinalizeProgress {
+  loaded: number;
+  total: number;
+  current?: string;
+}
+
+export async function finalizeReportPdf(
+  plan: ReportPlan,
+  selectedUrls: Set<string>,
+  onProgress?: (p: FinalizeProgress) => void,
+): Promise<Blob> {
+  const baseBytes = await plan.renderBase(selectedUrls);
+  const selected = plan.attachments.filter((a) => selectedUrls.has(a.url));
+
+  if (selected.length === 0) {
+    return new Blob([baseBytes as BlobPart], { type: "application/pdf" });
+  }
+
+  onProgress?.({ loaded: 0, total: selected.length });
+
+  // Baixa em paralelo (limitando concorrência leve)
+  const downloads: Array<{ meta: ReportAttachment; bytes: Uint8Array | null }> = [];
+  let done = 0;
+  await Promise.all(
+    selected.map(async (meta) => {
       try {
-        const r = await fetchPncpDocument({ data: { url: a.url } });
-        return { meta: a, doc: r };
-      } catch (e) {
-        return {
-          meta: a,
-          doc: { ok: false, base64: "", contentType: "", size: 0, error: String(e) },
-        };
+        const r = await fetchPncpDocument({ data: { url: meta.url } });
+        if (!r.ok) {
+          downloads.push({ meta, bytes: null });
+        } else {
+          const bin = atob(r.base64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const isPdf =
+            /pdf/i.test(r.contentType) ||
+            (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46);
+          downloads.push({ meta, bytes: isPdf ? bytes : null });
+        }
+      } catch {
+        downloads.push({ meta, bytes: null });
+      } finally {
+        done += 1;
+        onProgress?.({ loaded: done, total: selected.length, current: meta.titulo });
       }
     }),
   );
 
-  // Constrói lista final — descarta não-PDF
-  const validPdfs: Array<{ meta: (typeof fetched)[number]["meta"]; bytes: Uint8Array }> = [];
-  for (const f of fetched) {
-    if (!f.doc.ok) continue;
-    const bin = atob(f.doc.base64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    const isPdf =
-      /pdf/i.test(f.doc.contentType) ||
-      (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46);
-    if (!isPdf) continue;
-    validPdfs.push({ meta: f.meta, bytes });
-  }
-
-  // Se nenhum PDF foi baixado, ainda registra um aviso no doc principal
-  if (validPdfs.length === 0) {
-    drawFooter(jsPdfDoc, pageW, pageH);
-    jsPdfDoc.save(filename);
-    return;
-  }
-
-  // Páginas separadoras + lista de anexos
-  for (const v of validPdfs) {
-    jsPdfDoc.addPage();
-    const ctx: RenderCtx = { doc: jsPdfDoc, pageW, pageH, y: 0 };
-    drawHeader(ctx, "Anexo — documento oficial integrado");
-    setText(jsPdfDoc, 7, "bold", COLOR_ACCENT);
-    jsPdfDoc.text(v.meta.tipo.toUpperCase(), MARGIN, 130);
-    setText(jsPdfDoc, 14, "bold", COLOR_TITLE);
-    const t = jsPdfDoc.splitTextToSize(v.meta.titulo, pageW - MARGIN * 2);
-    jsPdfDoc.text(t.slice(0, 4), MARGIN, 150);
-    setText(jsPdfDoc, 8, "normal", COLOR_MUTED);
-    jsPdfDoc.text(
-      "Documento original abaixo, mesclado a este relatório a partir da fonte PNCP.",
-      MARGIN,
-      220,
-    );
-    setText(jsPdfDoc, 7, "normal", COLOR_ACCENT);
-    const urlLines = jsPdfDoc.splitTextToSize(v.meta.url, pageW - MARGIN * 2);
-    jsPdfDoc.text(urlLines.slice(0, 3), MARGIN, 240);
-    jsPdfDoc.link(MARGIN, 232, pageW - MARGIN * 2, 24, { url: v.meta.url });
-  }
-
-  // Aplica numeração / rodapé considerando que ainda virão páginas mescladas depois
-  drawFooter(jsPdfDoc, pageW, pageH);
-
-  // Converte o jsPDF para bytes
-  const mainBytes = new Uint8Array(jsPdfDoc.output("arraybuffer") as ArrayBuffer);
-
-  // Mescla com pdf-lib
+  // Mescla
   try {
-    const merged = await PDFDocument.load(mainBytes);
-    for (const v of validPdfs) {
+    const merged = await PDFDocument.load(baseBytes);
+    for (const d of downloads) {
+      if (!d.bytes) continue;
       try {
-        const ext = await PDFDocument.load(v.bytes, { ignoreEncryption: true });
+        const ext = await PDFDocument.load(d.bytes, { ignoreEncryption: true });
         const pages = await merged.copyPages(ext, ext.getPageIndices());
         for (const p of pages) merged.addPage(p);
       } catch {
@@ -548,304 +965,19 @@ async function mergeWithExternalPdfs(
       }
     }
     const out = await merged.save();
-    const blob = new Blob([out as BlobPart], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    return new Blob([out as BlobPart], { type: "application/pdf" });
   } catch {
-    // fallback: salva só o principal
-    jsPdfDoc.save(filename);
+    return new Blob([baseBytes as BlobPart], { type: "application/pdf" });
   }
 }
 
-/** Reúne arquivos do processo + arquivos das atas selecionadas. */
-function collectAttachments(
-  dossier: ProcessDossier | null,
-  itemDescricao?: string,
-): Array<{ titulo: string; tipo: string; url: string }> {
-  if (!dossier) return [];
-  const out: Array<{ titulo: string; tipo: string; url: string }> = [];
-  for (const a of dossier.arquivos) out.push(a);
-  const relevantAtas = pickRelevantAtas(dossier.atas, itemDescricao);
-  for (const ata of relevantAtas) {
-    for (const a of ata.arquivos) {
-      out.push({
-        titulo: `Ata ${ata.numeroAta ?? ""} — ${a.titulo}`.trim(),
-        tipo: a.tipo,
-        url: a.url,
-      });
-    }
-  }
-  // dedupe por URL
-  const seen = new Set<string>();
-  return out.filter((a) => {
-    if (seen.has(a.url)) return false;
-    seen.add(a.url);
-    return true;
-  });
-}
-
-export async function exportProcessReportPdf(
-  dossier: ProcessDossier,
-  opts: { highlightItem?: number } = {},
-): Promise<void> {
-  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-  const ctx: RenderCtx = {
-    doc,
-    pageW: doc.internal.pageSize.getWidth(),
-    pageH: doc.internal.pageSize.getHeight(),
-    y: 0,
-  };
-
-  drawHeader(ctx, "Relatório consolidado do processo");
-  await drawProcessoCard(ctx, dossier, { origem: dossier.origem, url: dossier.urlCanonica });
-  drawValores(ctx, dossier);
-
-  if (dossier.itens.length > 0) {
-    drawSectionTitle(
-      ctx,
-      `Itens do processo (${dossier.itens.length})`,
-    );
-    const highlight =
-      opts.highlightItem !== undefined
-        ? new Set([opts.highlightItem])
-        : undefined;
-    drawItensTable(ctx, dossier.itens, highlight);
-  }
-
-  drawArquivos(ctx, dossier.arquivos);
-  drawFundamentacao(ctx);
-
-  const orgaoSlug = slug(dossier.orgao || "processo");
-  const fname = `relatorio-processo-${orgaoSlug}-${dossier.ano ?? ""}-${dossier.sequencial ?? ""}.pdf`;
-  const attachments = collectAttachments(dossier);
-  await mergeWithExternalPdfs(doc, attachments, fname);
-}
-
-export async function exportItemReportPdf(
-  item: PriceResult,
-  dossier: ProcessDossier | null,
-): Promise<void> {
-  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-  const ctx: RenderCtx = {
-    doc,
-    pageW: doc.internal.pageSize.getWidth(),
-    pageH: doc.internal.pageSize.getHeight(),
-    y: 0,
-  };
-
-  drawHeader(ctx, "Relatório de item — pesquisa de preço unitário");
-  await drawProcessoCard(ctx, dossier, {
-    origem: dossier?.origem || item.origem,
-    url: dossier?.urlCanonica || item.url,
-  });
-
-  // Bloco do item específico
-  drawSectionTitle(ctx, "Item pesquisado");
-  drawParagraph(ctx, "Descrição do item", item.objetoEstruturado || item.titulo);
-  drawKeyValueGrid(
-    ctx,
-    [
-      ["Unidade", item.unidade?.toUpperCase()],
-      [
-        "Quantidade contratada",
-        typeof item.quantidade === "number" ? num(item.quantidade) : undefined,
-      ],
-      ["Valor unitário", brl(item.valor)],
-      ["Valor total do item", brl(item.valorTotal)],
-      ["Fornecedor", item.fornecedor],
-      ["CNPJ do fornecedor", item.cnpj ? fmtCnpj(item.cnpj) : undefined],
-      [
-        "Procedência do valor",
-        item.valorTipo === "unitario_homologado"
-          ? "Unitário homologado"
-          : item.valorTipo === "unitario_estimado"
-            ? "Unitário estimado"
-            : item.valorTipo === "global"
-              ? "Valor TOTAL do processo (não unitário)"
-              : "Sem contexto",
-      ],
-      [
-        "Homologação",
-        item.homologado ? "Sim — item homologado" : "Não confirmada",
-      ],
-    ],
-    2,
-  );
-
-  if (dossier) {
-    drawValores(ctx, dossier);
-
-    // Tabela com TODOS os itens do processo (destacando este)
-    if (dossier.itens.length > 0) {
-      drawSectionTitle(
-        ctx,
-        `Demais itens do mesmo processo (${dossier.itens.length})`,
-      );
-      const highlight = new Set<number>();
-      const desc = (item.objetoEstruturado || item.titulo || "")
-        .toLowerCase()
-        .slice(0, 40);
-      for (const it of dossier.itens) {
-        if (it.descricao.toLowerCase().includes(desc) && desc.length >= 10) {
-          highlight.add(it.numeroItem);
-        }
-      }
-      drawItensTable(ctx, dossier.itens, highlight);
-    }
-    drawArquivos(ctx, dossier.arquivos);
-  }
-
-  drawFundamentacao(ctx);
-
-  const fname = `relatorio-item-${slug(item.objetoEstruturado || item.titulo)}.pdf`;
-  const attachments = collectAttachments(dossier, item.objetoEstruturado || item.titulo);
-  await mergeWithExternalPdfs(doc, attachments, fname);
-}
-
-/**
- * Relatório completo da cesta de cotação: agrupa por processo,
- * inclui espelho + documentos oficiais + tabela consolidada.
- * Substitui o antigo exportCotacaoPdf na cesta.
- */
-export interface BasketReportRow {
-  item: PriceResult;
-  quantidadeCotada: number;
-  /** Dossier do processo dono deste item, quando disponível. */
-  dossier: ProcessDossier | null;
-}
-
-export async function exportBasketReportPdf(
-  rows: BasketReportRow[],
-  totals: { totalGeral: number; media: number; mediana: number },
-): Promise<void> {
-  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-  const ctx: RenderCtx = {
-    doc,
-    pageW: doc.internal.pageSize.getWidth(),
-    pageH: doc.internal.pageSize.getHeight(),
-    y: 0,
-  };
-
-  drawHeader(ctx, "Cesta de cotação — Nota Técnica de pesquisa de preços");
-
-  // Resumo
-  drawSectionTitle(ctx, "Resumo da cesta");
-  drawKeyValueGrid(
-    ctx,
-    [
-      ["Itens cotados", String(rows.length)],
-      ["Total geral", brl(totals.totalGeral)],
-      ["Média unitária", brl(totals.media)],
-      ["Mediana unitária", brl(totals.mediana)],
-    ],
-    4,
-  );
-
-  // Tabela consolidada
-  drawSectionTitle(ctx, "Itens consolidados");
-  ensureSpace(ctx, 40);
-  autoTable(doc, {
-    startY: ctx.y,
-    margin: { left: MARGIN, right: MARGIN },
-    head: [["#", "Item", "Un.", "Qtd", "Unitário", "Subtotal", "Fonte"]],
-    body: rows.map((r, i) => {
-      const unit = typeof r.item.valor === "number" ? r.item.valor : null;
-      const sub = unit !== null ? unit * r.quantidadeCotada : null;
-      return [
-        String(i + 1),
-        r.item.objetoEstruturado || r.item.titulo,
-        (r.item.unidade || "—").toUpperCase(),
-        String(r.quantidadeCotada),
-        brl(unit),
-        brl(sub),
-        [r.item.origem, r.item.orgao].filter(Boolean).join(" · "),
-      ];
-    }),
-    foot: [[
-      "",
-      "",
-      "",
-      "",
-      { content: "Total geral", styles: { halign: "right", fontStyle: "bold" } },
-      { content: brl(totals.totalGeral), styles: { halign: "right", fontStyle: "bold" } },
-      "",
-    ]],
-    styles: {
-      fontSize: 8,
-      cellPadding: 4,
-      valign: "top",
-      overflow: "linebreak",
-      textColor: 20,
-    },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255 },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
-    columnStyles: {
-      0: { cellWidth: 22, halign: "right" },
-      1: { cellWidth: "auto" },
-      2: { cellWidth: 28, halign: "center" },
-      3: { cellWidth: 40, halign: "right" },
-      4: { cellWidth: 70, halign: "right" },
-      5: { cellWidth: 75, halign: "right" },
-      6: { cellWidth: 110 },
-    },
-  });
-  // @ts-expect-error lastAutoTable
-  ctx.y = (doc.lastAutoTable?.finalY ?? ctx.y) + 16;
-
-  // Para cada processo distinto, anexa espelho + documentos
-  const seen = new Set<string>();
-  for (const r of rows) {
-    const d = r.dossier;
-    if (!d) continue;
-    const key = d.urlCanonica || `${d.cnpj}-${d.ano}-${d.sequencial}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    doc.addPage();
-    ctx.y = MARGIN;
-    drawHeader(ctx, "Espelho do processo");
-    await drawProcessoCard(ctx, d, { origem: d.origem, url: d.urlCanonica });
-    drawValores(ctx, d);
-    if (d.itens.length > 0) {
-      drawSectionTitle(ctx, `Itens do processo (${d.itens.length})`);
-      const highlight = new Set<number>();
-      const desc = (r.item.objetoEstruturado || r.item.titulo || "")
-        .toLowerCase()
-        .slice(0, 40);
-      for (const it of d.itens) {
-        if (it.descricao.toLowerCase().includes(desc) && desc.length >= 10) {
-          highlight.add(it.numeroItem);
-        }
-      }
-      drawItensTable(ctx, d.itens, highlight);
-    }
-    drawArquivos(ctx, d.arquivos);
-  }
-
-  // Última página: fundamentação
-  doc.addPage();
-  ctx.y = MARGIN;
-  drawHeader(ctx, "Encerramento");
-  drawFundamentacao(ctx);
-
-  const date = new Date().toISOString().slice(0, 10);
-  // Anexa edital + atas de cada processo distinto à cesta
-  const allAttachments: Array<{ titulo: string; tipo: string; url: string }> = [];
-  const seenProc = new Set<string>();
-  for (const r of rows) {
-    if (!r.dossier) continue;
-    const k = r.dossier.urlCanonica || `${r.dossier.cnpj}-${r.dossier.ano}-${r.dossier.sequencial}`;
-    if (seenProc.has(k)) continue;
-    seenProc.add(k);
-    allAttachments.push(
-      ...collectAttachments(r.dossier, r.item.objetoEstruturado || r.item.titulo),
-    );
-  }
-  await mergeWithExternalPdfs(doc, allAttachments, `cesta-cotacao-${date}.pdf`);
+export function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }

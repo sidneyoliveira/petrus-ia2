@@ -3,7 +3,8 @@ import type { PriceResult } from "@/lib/types";
 import { useServerFn } from "@tanstack/react-start";
 import { submitFeedback } from "@/lib/feedback.functions";
 import { buildProcessDossier } from "@/lib/report.functions";
-import { exportItemReportPdf, exportProcessReportPdf } from "@/lib/export-report-pdf";
+import { buildItemReport, buildProcessReport, type ReportPlan } from "@/lib/export-report-pdf";
+import { ReportPreviewDialog } from "./ReportPreviewDialog";
 import { useState } from "react";
 
 function brl(v?: number | null) {
@@ -60,6 +61,7 @@ export function ResultCard({ item, onOpen, onSave, saved, query }: Props) {
   const [feedback, setFeedback] = useState<"accept" | "reject" | null>(null);
   const [sending, setSending] = useState(false);
   const [reportLoading, setReportLoading] = useState<"item" | "process" | null>(null);
+  const [reportPlan, setReportPlan] = useState<ReportPlan | null>(null);
 
   const handleReport = async (mode: "item" | "process") => {
     if (reportLoading) return;
@@ -79,11 +81,11 @@ export function ResultCard({ item, onOpen, onSave, saved, query }: Props) {
           },
         },
       });
-      if (mode === "item") {
-        await exportItemReportPdf(item, dossier);
-      } else {
-        await exportProcessReportPdf(dossier);
-      }
+      const plan =
+        mode === "item"
+          ? buildItemReport(item, dossier)
+          : buildProcessReport(dossier);
+      setReportPlan(plan);
     } catch (e) {
       alert("Falha ao gerar relatório: " + (e as Error).message);
     } finally {
@@ -117,6 +119,7 @@ export function ResultCard({ item, onOpen, onSave, saved, query }: Props) {
     }
   };
   return (
+    <>
     <article className="group relative rounded-xl border border-border bg-card hover:border-accent/40 hover:bg-card/80 transition-colors overflow-hidden">
       <div className="flex flex-col md:flex-row md:items-stretch">
         {/* Bloco principal: título + metadados */}
@@ -297,5 +300,7 @@ export function ResultCard({ item, onOpen, onSave, saved, query }: Props) {
         </div>
       </div>
     </article>
+    <ReportPreviewDialog plan={reportPlan} onClose={() => setReportPlan(null)} />
+    </>
   );
 }

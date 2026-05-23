@@ -6,7 +6,8 @@ import { ScoreBar } from "./ScoreBar";
 import { extractItemsFromDocument, type ExtractResponse } from "@/lib/extract.functions";
 import { buildHighlightUrl } from "@/lib/highlight-source";
 import { buildProcessDossier } from "@/lib/report.functions";
-import { exportItemReportPdf, exportProcessReportPdf } from "@/lib/export-report-pdf";
+import { buildItemReport, buildProcessReport, type ReportPlan } from "@/lib/export-report-pdf";
+import { ReportPreviewDialog } from "./ReportPreviewDialog";
 
 function brl(v?: number | null) {
   if (typeof v !== "number") return "—";
@@ -35,6 +36,7 @@ export function ResultModal({ item, onClose }: Props) {
   const runExtract = useServerFn(extractItemsFromDocument);
   const fetchDossier = useServerFn(buildProcessDossier);
   const [reportLoading, setReportLoading] = useState<"item" | "process" | null>(null);
+  const [reportPlan, setReportPlan] = useState<ReportPlan | null>(null);
 
   useEffect(() => {
     if (!item) return;
@@ -72,11 +74,11 @@ export function ResultModal({ item, onClose }: Props) {
           },
         },
       });
-      if (mode === "item") {
-        await exportItemReportPdf(item, dossier);
-      } else {
-        await exportProcessReportPdf(dossier);
-      }
+      const plan =
+        mode === "item"
+          ? buildItemReport(item, dossier)
+          : buildProcessReport(dossier);
+      setReportPlan(plan);
     } catch (e) {
       alert("Falha ao gerar relatório: " + (e as Error).message);
     } finally {
@@ -126,6 +128,7 @@ export function ResultModal({ item, onClose }: Props) {
   };
 
   return (
+    <>
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
       onClick={onClose}
@@ -311,6 +314,8 @@ export function ResultModal({ item, onClose }: Props) {
         </div>
       </div>
     </div>
+    <ReportPreviewDialog plan={reportPlan} onClose={() => setReportPlan(null)} />
+    </>
   );
 }
 
