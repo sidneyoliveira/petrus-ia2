@@ -85,9 +85,45 @@ function setText(
   weight: "normal" | "bold" = "normal",
   color: [number, number, number] = [0, 0, 0],
 ) {
-  doc.setFont("helvetica", weight);
+  // jsPDF's built-in helvetica/times BOLD variants have a known bug that
+  // inserts visible spacing after accented Latin chars (Ó, É, Í, Ç…) when
+  // text mixes ASCII + diacritics — common in pt-BR titles. Workaround:
+  // always use the normal weight and synthesize bold by re-drawing with
+  // a 0.3pt x-offset (patched into doc.text in installBoldShim()).
+  doc.setFont("helvetica", "normal");
+  (doc as unknown as { __synthBold?: boolean }).__synthBold = weight === "bold";
   doc.setFontSize(size);
   doc.setTextColor(...color);
+}
+
+/**
+ * Monkey-patch a jsPDF instance once so that doc.text() automatically draws
+ * a second pass shifted by ~0.3pt whenever setText() requested bold.
+ * This sidesteps the jsPDF accent-spacing bug while preserving every call site.
+ */
+function installBoldShim(doc: jsPDF) {
+  const flagged = doc as unknown as { __boldShimInstalled?: boolean; __synthBold?: boolean };
+  if (flagged.__boldShimInstalled) return;
+  flagged.__boldShimInstalled = true;
+  const orig = doc.text.bind(doc);
+  (doc as unknown as { text: typeof doc.text }).text = ((
+    ...args: Parameters<typeof doc.text>
+  ) => {
+    const r = orig(...args);
+    if (flagged.__synthBold) {
+      // 2nd pass shifted right by 0.3pt for a "semibold" stroke
+      const [text, x, y, ...rest] = args as [
+        string | string[],
+        number,
+        number,
+        ...unknown[],
+      ];
+      if (typeof x === "number" && typeof y === "number") {
+        orig(text, x + 0.3, y, ...(rest as []));
+      }
+    }
+    return r;
+  }) as typeof doc.text;
 }
 
 // ---------------------- desenho de blocos ----------------------
@@ -355,7 +391,7 @@ function drawItensTable(
       overflow: "linebreak",
       textColor: 20,
     },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 8 },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 8, fontStyle: "normal" },
     bodyStyles: { fillColor: [255, 255, 255] },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     columnStyles: {
@@ -373,8 +409,11 @@ function drawItensTable(
         data.section === "body" &&
         highlightNumeros.has(Number((data.row.raw as string[])[0]))
       ) {
+        // Não usar fontStyle "bold" aqui — jsPDF tem bug de espaçamento
+        // após chars acentuados em helvetica/times bold. Destacamos só
+        // pela cor de fundo + texto mais escuro.
         data.cell.styles.fillColor = [254, 243, 199];
-        data.cell.styles.fontStyle = "bold";
+        data.cell.styles.textColor = [30, 41, 59];
       }
     },
   });
@@ -399,7 +438,7 @@ function drawContratosResumo(ctx: RenderCtx, contratos: ProcessDossierContrato[]
       c.cnpjFornecedor ? `CNPJ ${fmtCnpj(c.cnpjFornecedor)}` : null,
       typeof c.valorInicial === "number" ? `Valor ${brl(c.valorInicial)}` : null,
       c.vigenciaInicio || c.vigenciaFim
-        ? `Vigência ${fmtDate(c.vigenciaInicio)} → ${fmtDate(c.vigenciaFim)}`
+        ? `Vigência ${fmtDate(c.vigenciaInicio)} a ${fmtDate(c.vigenciaFim)}`
         : null,
     ]
       .filter(Boolean)
@@ -623,6 +662,7 @@ export function buildItemReport(
     attachments,
     renderBase: async (selectedUrls) => {
       const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+      installBoldShim(doc);
       const ctx: RenderCtx = {
         doc,
         pageW: doc.internal.pageSize.getWidth(),
@@ -709,6 +749,7 @@ export function buildProcessReport(
     attachments,
     renderBase: async (selectedUrls) => {
       const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+      installBoldShim(doc);
       const ctx: RenderCtx = {
         doc,
         pageW: doc.internal.pageSize.getWidth(),
@@ -787,6 +828,7 @@ export function buildBasketReport(
     attachments,
     renderBase: async (selectedUrls) => {
       const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+      installBoldShim(doc);
       const ctx: RenderCtx = {
         doc,
         pageW: doc.internal.pageSize.getWidth(),
@@ -843,7 +885,7 @@ export function buildBasketReport(
           overflow: "linebreak",
           textColor: 20,
         },
-        headStyles: { fillColor: [30, 41, 59], textColor: 255 },
+        headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: "normal" },
         alternateRowStyles: { fillColor: [248, 250, 252] },
         columnStyles: {
           0: { cellWidth: 22, halign: "right" },
