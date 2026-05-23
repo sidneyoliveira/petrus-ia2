@@ -22,6 +22,10 @@ import {
   CheckSquare,
   Square,
   AlertTriangle,
+  Building2,
+  ChevronDown,
+  ChevronUp,
+  Save,
 } from "lucide-react";
 import {
   finalizeReportPdf,
@@ -30,6 +34,11 @@ import {
   type ReportAttachment,
   type AttachmentCategory,
 } from "@/lib/export-report-pdf";
+import {
+  getOrgMetadata,
+  setOrgMetadata,
+  type OrgMetadata,
+} from "@/lib/report-org";
 
 interface Props {
   plan: ReportPlan | null;
@@ -79,6 +88,10 @@ export function ReportPreviewDialog({ plan, onClose }: Props) {
   const [progress, setProgress] = useState<{ loaded: number; total: number; current?: string } | null>(
     null,
   );
+  const [orgOpen, setOrgOpen] = useState(false);
+  const [orgDraft, setOrgDraft] = useState<OrgMetadata>(() => getOrgMetadata());
+  const [orgVersion, setOrgVersion] = useState(0); // dispara re-render da prévia
+  const [filenameTick, setFilenameTick] = useState(0);
   const lastBlobRef = useRef<string | null>(null);
 
   // Reset selection when plan changes
@@ -112,7 +125,7 @@ export function ReportPreviewDialog({ plan, onClose }: Props) {
       canceled = true;
       clearTimeout(t);
     };
-  }, [plan, selectedUrls]);
+  }, [plan, selectedUrls, orgVersion]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -181,7 +194,8 @@ export function ReportPreviewDialog({ plan, onClose }: Props) {
     setProgress({ loaded: 0, total: selectedUrls.size });
     try {
       const blob = await finalizeReportPdf(plan, selectedUrls, (p) => setProgress(p));
-      downloadBlob(blob, plan.filename);
+      const name = plan.getFilename?.() ?? plan.filename;
+      downloadBlob(blob, name);
     } catch (e) {
       alert("Falha ao gerar PDF: " + (e as Error).message);
     } finally {
@@ -192,6 +206,19 @@ export function ReportPreviewDialog({ plan, onClose }: Props) {
 
   const selectedCount = selectedUrls.size;
   const totalCount = plan.attachments.length;
+  const displayFilename = plan.getFilename?.() ?? plan.filename;
+  void filenameTick; // forçar leitura para typecheck após save
+
+  const saveOrg = () => {
+    setOrgMetadata(orgDraft);
+    setOrgVersion((v) => v + 1);
+    setFilenameTick((v) => v + 1);
+  };
+
+  const orgFilled =
+    !!(orgDraft.orgName || orgDraft.orgShort) &&
+    !!orgDraft.cnpj &&
+    !!orgDraft.processoNumero;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
@@ -209,7 +236,7 @@ export function ReportPreviewDialog({ plan, onClose }: Props) {
             <div className="min-w-0">
               <div className="text-sm font-semibold truncate">Prévia do relatório</div>
               <div className="text-[11px] text-muted-foreground truncate font-mono">
-                {plan.filename}
+                {displayFilename}
               </div>
             </div>
           </div>
@@ -247,6 +274,93 @@ export function ReportPreviewDialog({ plan, onClose }: Props) {
 
           {/* Sidebar de anexos */}
           <aside className="flex flex-col min-h-0 bg-card">
+            {/* Identificação do órgão / processo */}
+            <div className="border-b border-border shrink-0">
+              <button
+                onClick={() => setOrgOpen((o) => !o)}
+                className="w-full flex items-center justify-between gap-2 px-4 py-2.5 hover:bg-secondary/40 transition-colors"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <Building2 className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span className="text-xs font-semibold uppercase tracking-wider">
+                    Identificação do órgão
+                  </span>
+                  {!orgFilled && (
+                    <span className="text-[9px] uppercase tracking-wider bg-warning/15 text-warning rounded px-1.5 py-0.5">
+                      preencher
+                    </span>
+                  )}
+                  {orgFilled && (
+                    <span className="text-[9px] uppercase tracking-wider bg-success/15 text-success rounded px-1.5 py-0.5">
+                      ok
+                    </span>
+                  )}
+                </div>
+                {orgOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              </button>
+              {orgOpen && (
+                <div className="px-4 pb-3 space-y-2">
+                  <OrgField
+                    label="Órgão / Razão social"
+                    placeholder="Ex.: PREFEITURA MUNICIPAL DE ITAREMA"
+                    value={orgDraft.orgName}
+                    onChange={(v) => setOrgDraft((d) => ({ ...d, orgName: v }))}
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <OrgField
+                      label="Sigla / curta"
+                      placeholder="ITAREMA-CE"
+                      value={orgDraft.orgShort}
+                      onChange={(v) => setOrgDraft((d) => ({ ...d, orgShort: v }))}
+                    />
+                    <OrgField
+                      label="CNPJ"
+                      placeholder="00.000.000/0000-00"
+                      value={orgDraft.cnpj}
+                      onChange={(v) => setOrgDraft((d) => ({ ...d, cnpj: v }))}
+                    />
+                  </div>
+                  <OrgField
+                    label="Endereço (rodapé)"
+                    placeholder="Praça ..., Centro, Cidade-UF, CEP ..."
+                    value={orgDraft.endereco}
+                    onChange={(v) => setOrgDraft((d) => ({ ...d, endereco: v }))}
+                  />
+                  <OrgField
+                    label="Nº do processo"
+                    placeholder="Ex.: DISP 11/2026"
+                    value={orgDraft.processoNumero}
+                    onChange={(v) => setOrgDraft((d) => ({ ...d, processoNumero: v }))}
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <OrgField
+                      label="Responsável"
+                      placeholder="Nome completo"
+                      value={orgDraft.responsavel}
+                      onChange={(v) => setOrgDraft((d) => ({ ...d, responsavel: v }))}
+                    />
+                    <OrgField
+                      label="Cargo"
+                      placeholder="Pregoeiro(a)"
+                      value={orgDraft.cargo}
+                      onChange={(v) => setOrgDraft((d) => ({ ...d, cargo: v }))}
+                    />
+                  </div>
+                  <button
+                    onClick={saveOrg}
+                    className="w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-primary/10 text-primary border border-primary/30 px-3 py-1.5 text-xs font-semibold hover:bg-primary/15"
+                  >
+                    <Save className="h-3 w-3" />
+                    Salvar e atualizar prévia
+                  </button>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Os dados ficam salvos neste navegador e são reaproveitados em todos os
+                    próximos relatórios.
+                  </p>
+                </div>
+              )}
+            </div>
+
             <div className="px-4 py-3 border-b border-border shrink-0">
               <div className="flex items-center justify-between mb-1">
                 <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
