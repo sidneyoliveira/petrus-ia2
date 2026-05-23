@@ -20,6 +20,7 @@ import {
 import { listThemes } from "@/lib/themes.functions";
 import { calculateBasketStats } from "@/lib/basket-stats";
 import { useEffect } from "react";
+import { btn } from "@/lib/button-variants";
 
 function brl(v?: number | null) {
   if (typeof v !== "number" || !Number.isFinite(v)) return "—";
@@ -160,7 +161,7 @@ function CestasPage() {
                 newName.trim().length === 0 ||
                 basket.items.length === 0
               }
-              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              className={btn("primary", "sm")}
             >
               {saveMut.isPending ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -240,7 +241,7 @@ function CestasPage() {
                           if (confirm(`Excluir cesta "${b.name}"?`))
                             delMut.mutate(b.id);
                         }}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-destructive/10 hover:text-destructive shrink-0"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-destructive/10 hover:text-destructive shrink-0 transition-smooth"
                         title="Excluir"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -282,7 +283,7 @@ function CestasPage() {
                     <Link
                       to="/cotacao"
                       onClick={() => loadMut.mutate(b.id)}
-                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-foreground hover:opacity-90 transition-smooth"
+                      className={`${btn("accent", "sm")} w-full`}
                     >
                       <Download className="h-3.5 w-3.5" />
                       Carregar na cotação
