@@ -314,6 +314,8 @@ export function ResultModal({ item, onClose }: Props) {
         </div>
       </div>
     </div>
+    <ReportPreviewDialog plan={reportPlan} onClose={() => setReportPlan(null)} />
+    </>
   );
 }
 

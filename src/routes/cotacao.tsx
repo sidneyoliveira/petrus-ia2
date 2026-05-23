@@ -5,7 +5,8 @@ import { Trash2, ShoppingBasket, ExternalLink, FileSpreadsheet, FileText, Cloud,
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import { useBasket, getActiveBasketId, setActiveBasketId } from "@/lib/basket";
-import { exportBasketReportPdf } from "@/lib/export-report-pdf";
+import { buildBasketReport, type ReportPlan } from "@/lib/export-report-pdf";
+import { ReportPreviewDialog } from "@/components/ReportPreviewDialog";
 import { buildProcessDossier } from "@/lib/report.functions";
 import { saveBasket } from "@/lib/baskets.functions";
 import { useAuth } from "@/lib/auth";
@@ -35,6 +36,7 @@ function CotacaoPage() {
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [reportPlan, setReportPlan] = useState<ReportPlan | null>(null);
 
   async function saveToCloud() {
     if (!auth.isAuthenticated || items.length === 0) return;
@@ -154,7 +156,7 @@ function CotacaoPage() {
           try { resolved.set(k, await p); } catch { /* tolera */ }
         }),
       );
-      await exportBasketReportPdf(
+      const plan = buildBasketReport(
         totals.rows.map((r) => ({
           item: r.item,
           quantidadeCotada: r.quantidade,
@@ -162,6 +164,7 @@ function CotacaoPage() {
         })),
         { totalGeral: totals.totalGeral, media: totals.media, mediana: totals.mediana },
       );
+      setReportPlan(plan);
     } catch (e) {
       alert("Falha ao gerar PDF: " + (e as Error).message);
     } finally {
@@ -355,6 +358,7 @@ function CotacaoPage() {
         </div>
       </main>
       <SiteFooter />
+      <ReportPreviewDialog plan={reportPlan} onClose={() => setReportPlan(null)} />
     </div>
   );
 }
