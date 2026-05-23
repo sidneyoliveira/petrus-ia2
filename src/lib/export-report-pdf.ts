@@ -461,8 +461,12 @@ async function mergeWithExternalPdfs(
   attachments: Array<{ titulo: string; tipo: string; url: string }>,
   filename: string,
 ) {
-  // Sem anexos? Apenas salva.
+  const pageW = jsPdfDoc.internal.pageSize.getWidth();
+  const pageH = jsPdfDoc.internal.pageSize.getHeight();
+
+  // Sem anexos? Apenas salva (com rodapé).
   if (attachments.length === 0) {
+    drawFooter(jsPdfDoc, pageW, pageH);
     jsPdfDoc.save(filename);
     return;
   }
@@ -482,36 +486,23 @@ async function mergeWithExternalPdfs(
     }),
   );
 
-  // Para cada anexo bem-sucedido que seja PDF, adiciona uma página separadora antes
-  const pageW = jsPdfDoc.internal.pageSize.getWidth();
-  const pageH = jsPdfDoc.internal.pageSize.getHeight();
-
-  // Constrói lista final (com separadores) — descarta não-PDF
+  // Constrói lista final — descarta não-PDF
   const validPdfs: Array<{ meta: (typeof fetched)[number]["meta"]; bytes: Uint8Array }> = [];
   for (const f of fetched) {
     if (!f.doc.ok) continue;
-    const isPdf =
-      /pdf/i.test(f.doc.contentType) ||
-      atob(f.doc.base64.slice(0, 8)).startsWith("%PDF");
-    if (!isPdf) continue;
     const bin = atob(f.doc.base64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const isPdf =
+      /pdf/i.test(f.doc.contentType) ||
+      (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46);
+    if (!isPdf) continue;
     validPdfs.push({ meta: f.meta, bytes });
   }
 
   // Se nenhum PDF foi baixado, ainda registra um aviso no doc principal
   if (validPdfs.length === 0) {
-    jsPdfDoc.addPage();
-    const ctx: RenderCtx = { doc: jsPdfDoc, pageW, pageH, y: 0 };
-    drawHeader(ctx, "Documentos oficiais não anexados");
-    setText(jsPdfDoc, 9, "normal", COLOR_MUTED);
-    ctx.y = 120;
-    jsPdfDoc.text(
-      "Os documentos da fonte não puderam ser baixados no momento da emissão.",
-      MARGIN,
-      ctx.y,
-    );
+    drawFooter(jsPdfDoc, pageW, pageH);
     jsPdfDoc.save(filename);
     return;
   }
