@@ -124,7 +124,7 @@ function LoginPage() {
               />
             </div>
             {err && <p className="text-xs text-destructive">{err}</p>}
-            {msg && <p className="text-xs text-emerald-600 dark:text-emerald-400">{msg}</p>}
+            {msg && <p className="text-xs text-success">{msg}</p>}
             <button
               type="submit"
               disabled={loading}
