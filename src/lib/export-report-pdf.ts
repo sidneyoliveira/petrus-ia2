@@ -15,8 +15,10 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import QRCode from "qrcode";
+import { PDFDocument } from "pdf-lib";
 import type { PriceResult } from "./types";
-import type { ProcessDossier, ProcessDossierItem } from "./report.functions";
+import type { ProcessDossier, ProcessDossierItem, ProcessDossierAta } from "./report.functions";
+import { fetchPncpDocument } from "./report.functions";
 
 // ---------------------- helpers ----------------------
 
@@ -95,13 +97,6 @@ function drawHeader(ctx: RenderCtx, subtitle: string) {
     MARGIN,
     64,
   );
-  setText(doc, 8, "normal", COLOR_MUTED);
-  doc.text(
-    `Emitido em ${new Date().toLocaleString("pt-BR")}`,
-    pageW - MARGIN,
-    64,
-    { align: "right" },
-  );
   // Subtítulo (tipo do relatório)
   setText(doc, 10, "bold", COLOR_ACCENT);
   doc.text(subtitle, MARGIN, 82);
@@ -163,23 +158,36 @@ function drawParagraph(ctx: RenderCtx, label: string, text?: string | null) {
   ctx.y += 6;
 }
 
-async function drawCanonicalSource(
+/**
+ * Card principal: dados do processo + QR Code da fonte oficial.
+ * Substitui o antigo "Espelho do edital" + "Fonte oficial" em um único bloco.
+ */
+async function drawProcessoCard(
   ctx: RenderCtx,
-  origem: string,
-  url?: string,
+  d: ProcessDossier | null,
+  fallback: { origem: string; url?: string },
 ) {
-  ensureSpace(ctx, 120);
   const { doc, pageW } = ctx;
   const boxX = MARGIN;
-  const boxY = ctx.y;
   const boxW = pageW - MARGIN * 2;
-  const boxH = 110;
+  const url = d?.urlCanonica || fallback.url;
+
+  // Pré-calcula objeto (full width abaixo) pra dimensionar o card
+  const objeto = (d?.objetoCompra || "").trim();
+  const objetoLines = objeto
+    ? doc.splitTextToSize(objeto, boxW - 28).slice(0, 6)
+    : [];
+  const baseH = 130;
+  const boxH = baseH + (objetoLines.length > 0 ? 18 + objetoLines.length * 11 : 0);
+  ensureSpace(ctx, boxH + 16);
+  const boxY = ctx.y;
+
   doc.setDrawColor(...COLOR_RULE);
   doc.setFillColor(248, 250, 252);
   doc.roundedRect(boxX, boxY, boxW, boxH, 6, 6, "FD");
 
-  // QR code à direita
-  let qrSize = 84;
+  // QR (direita)
+  let qrSize = 90;
   if (url) {
     try {
       const dataUrl = await QRCode.toDataURL(url, {
@@ -190,11 +198,15 @@ async function drawCanonicalSource(
       doc.addImage(
         dataUrl,
         "PNG",
-        boxX + boxW - qrSize - 13,
-        boxY + 13,
+        boxX + boxW - qrSize - 14,
+        boxY + 14,
         qrSize,
         qrSize,
       );
+      setText(doc, 6.5, "normal", COLOR_MUTED);
+      doc.text("Escaneie para abrir a fonte", boxX + boxW - qrSize - 14, boxY + qrSize + 22, {
+        maxWidth: qrSize,
+      });
     } catch {
       qrSize = 0;
     }
@@ -202,29 +214,65 @@ async function drawCanonicalSource(
     qrSize = 0;
   }
 
-  // Texto à esquerda
-  setText(doc, 8, "bold", COLOR_ACCENT);
-  doc.text("FONTE OFICIAL CONSULTADA", boxX + 14, boxY + 22);
-  setText(doc, 12, "bold", COLOR_TITLE);
-  doc.text(origem.toUpperCase(), boxX + 14, boxY + 40);
-  setText(doc, 8, "normal", COLOR_MUTED);
-  doc.text("URL canônica para verificação por auditoria:", boxX + 14, boxY + 58);
-  setText(doc, 9, "normal", COLOR_ACCENT);
-  const maxUrlW = boxW - 28 - (qrSize ? qrSize + 16 : 0);
-  const urlLines = doc.splitTextToSize(url || "—", maxUrlW);
-  doc.text(urlLines.slice(0, 3), boxX + 14, boxY + 72);
-  if (url) {
-    // Faz a área do link clicável
-    doc.link(boxX + 14, boxY + 62, maxUrlW, 30, { url });
-  }
-  setText(doc, 7, "normal", COLOR_MUTED);
-  doc.text(
-    "Escaneie o QR Code para acessar a página original.",
-    boxX + 14,
-    boxY + boxH - 12,
-  );
+  // Coluna esquerda: dados do processo
+  const leftX = boxX + 14;
+  const leftMaxW = boxW - 28 - (qrSize ? qrSize + 16 : 0);
+  let y = boxY + 22;
 
-  ctx.y += boxH + 16;
+  // Cabeçalho do card: órgão + nº/ano
+  setText(doc, 7, "bold", COLOR_ACCENT);
+  doc.text("PROCESSO LICITATÓRIO", leftX, y);
+  y += 12;
+  setText(doc, 12, "bold", COLOR_TITLE);
+  const orgaoLines = doc.splitTextToSize(
+    (d?.orgao || fallback.origem || "—").trim(),
+    leftMaxW,
+  );
+  doc.text(orgaoLines.slice(0, 2), leftX, y);
+  y += Math.min(orgaoLines.length, 2) * 13 + 4;
+
+  // Grid de 2 colunas com dados-chave
+  const pairs: Array<[string, string]> = [];
+  if (d?.sequencial && d?.ano) pairs.push(["Nº / Ano", `${d.sequencial}/${d.ano}`]);
+  if (d?.modalidade) pairs.push(["Modalidade", d.modalidade]);
+  if (d?.situacao) pairs.push(["Situação", d.situacao]);
+  const mun = [d?.municipio, d?.uf].filter(Boolean).join(" / ");
+  if (mun) pairs.push(["Local", mun]);
+  if (d?.dataPublicacao) pairs.push(["Publicação", fmtDate(d.dataPublicacao)]);
+  if (d?.cnpj) pairs.push(["CNPJ do órgão", fmtCnpj(d.cnpj)]);
+
+  const colW = leftMaxW / 2;
+  for (let i = 0; i < pairs.length; i += 2) {
+    for (let c = 0; c < 2 && i + c < pairs.length; c++) {
+      const [label, value] = pairs[i + c];
+      const x = leftX + c * colW;
+      setText(doc, 6.5, "normal", COLOR_MUTED);
+      doc.text(label.toUpperCase(), x, y);
+      setText(doc, 9, "normal", [0, 0, 0]);
+      const lines = doc.splitTextToSize(value, colW - 6);
+      doc.text(lines.slice(0, 1), x, y + 10);
+    }
+    y += 22;
+  }
+
+  // URL canônica (linha clicável discreta)
+  if (url) {
+    setText(doc, 7, "normal", COLOR_ACCENT);
+    const urlLines = doc.splitTextToSize(url, leftMaxW);
+    doc.text(urlLines.slice(0, 2), leftX, boxY + baseH - 14);
+    doc.link(leftX, boxY + baseH - 24, leftMaxW, 20, { url });
+  }
+
+  // Objeto (full width abaixo)
+  if (objetoLines.length > 0) {
+    const oy = boxY + baseH + 4;
+    setText(doc, 6.5, "bold", COLOR_MUTED);
+    doc.text("OBJETO DA CONTRATAÇÃO", leftX, oy);
+    setText(doc, 9, "normal", [0, 0, 0]);
+    doc.text(objetoLines, leftX, oy + 12);
+  }
+
+  ctx.y = boxY + boxH + 16;
 }
 
 function drawFooter(doc: jsPDF, pageW: number, pageH: number) {
@@ -266,15 +314,6 @@ function drawFundamentacao(ctx: RenderCtx) {
 
 function drawArquivos(ctx: RenderCtx, arquivos: ProcessDossier["arquivos"]) {
   if (!arquivos || arquivos.length === 0) {
-    drawSectionTitle(ctx, "Documentos oficiais da fonte");
-    setText(ctx.doc, 9, "normal", COLOR_MUTED);
-    ensureSpace(ctx, 14);
-    ctx.doc.text(
-      "Nenhum documento publicado pela fonte até o momento da emissão.",
-      MARGIN,
-      ctx.y,
-    );
-    ctx.y += 18;
     return;
   }
   drawSectionTitle(ctx, "Documentos oficiais da fonte");
@@ -299,28 +338,21 @@ function drawArquivos(ctx: RenderCtx, arquivos: ProcessDossier["arquivos"]) {
   }
 }
 
-function drawProcessoEspelho(ctx: RenderCtx, d: ProcessDossier) {
-  drawSectionTitle(ctx, "Espelho do edital");
+function drawValores(ctx: RenderCtx, d: ProcessDossier) {
+  if (
+    typeof d.valorTotalEstimado !== "number" &&
+    typeof d.valorTotalHomologado !== "number"
+  )
+    return;
+  drawSectionTitle(ctx, "Valores do processo");
   drawKeyValueGrid(
     ctx,
     [
-      ["Órgão", d.orgao],
-      ["CNPJ do órgão", d.cnpj ? fmtCnpj(d.cnpj) : undefined],
-      ["Modalidade", d.modalidade],
-      ["Situação", d.situacao],
-      [
-        "Nº/Ano da contratação",
-        d.sequencial && d.ano ? `${d.sequencial}/${d.ano}` : undefined,
-      ],
-      ["Nº de controle PNCP", d.numeroControlePNCP],
-      ["Município / UF", [d.municipio, d.uf].filter(Boolean).join(" / ")],
-      ["Data de publicação", fmtDate(d.dataPublicacao)],
       ["Valor total estimado", brl(d.valorTotalEstimado)],
       ["Valor total homologado", brl(d.valorTotalHomologado)],
     ],
     2,
   );
-  drawParagraph(ctx, "Objeto da contratação", d.objetoCompra);
 }
 
 function drawItensTable(
