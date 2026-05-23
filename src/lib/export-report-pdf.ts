@@ -25,6 +25,12 @@ import type {
   ProcessDossierContrato,
 } from "./report.functions";
 import { fetchPncpDocument } from "./report.functions";
+import {
+  buildReportFilename,
+  formatCnpj as fmtOrgCnpj,
+  getOrgMetadata,
+  type OrgMetadata,
+} from "./report-org";
 
 // ---------------------- constants & utils ----------------------
 
@@ -33,6 +39,15 @@ const COLOR_TITLE: [number, number, number] = [15, 23, 42];
 const COLOR_MUTED: [number, number, number] = [110, 110, 110];
 const COLOR_ACCENT: [number, number, number] = [30, 64, 175];
 const COLOR_RULE: [number, number, number] = [220, 220, 220];
+
+const CHART_PALETTE: Array<[number, number, number]> = [
+  [30, 64, 175],   // azul (Fontes similares)
+  [16, 122, 87],   // verde (Fornecedores)
+  [202, 138, 4],   // âmbar (Mídia/Internet)
+  [124, 58, 237],  // roxo
+  [220, 38, 38],   // vermelho
+  [14, 116, 144],  // ciano
+];
 
 function brl(v?: number | null) {
   if (typeof v !== "number" || !Number.isFinite(v)) return "—";
@@ -130,20 +145,41 @@ function installBoldShim(doc: jsPDF) {
 
 function drawHeader(ctx: RenderCtx, subtitle: string) {
   const { doc, pageW } = ctx;
-  setText(doc, 14, "bold", COLOR_TITLE);
-  doc.text("RELATÓRIO TÉCNICO DE PESQUISA DE PREÇOS", MARGIN, 50);
-  setText(doc, 8, "normal", COLOR_MUTED);
+  const meta = getOrgMetadata();
+  const hasOrg = !!(meta.orgName || meta.orgShort);
+
+  // Linha 1 — Órgão (se preenchido) em destaque
+  if (hasOrg) {
+    setText(doc, 11, "bold", COLOR_TITLE);
+    const orgLine = (meta.orgName || meta.orgShort).toUpperCase();
+    const lines = doc.splitTextToSize(orgLine, pageW - MARGIN * 2);
+    doc.text(lines.slice(0, 1), MARGIN, 44);
+  }
+
+  // Linha 2 — Título "NOTA TÉCNICA" ou "RELATÓRIO TÉCNICO"
+  setText(doc, hasOrg ? 13 : 14, "bold", COLOR_TITLE);
+  const titulo = meta.processoNumero
+    ? `NOTA TÉCNICA — PESQUISA DE PREÇOS Nº ${meta.processoNumero.toUpperCase()}`
+    : "NOTA TÉCNICA — PESQUISA DE PREÇOS";
+  doc.text(titulo, MARGIN, hasOrg ? 60 : 50);
+
+  // Linha 3 — base legal
+  setText(doc, 7.5, "normal", COLOR_MUTED);
   doc.text(
     "Lei nº 14.133/2021 (art. 23) · IN SEGES/ME nº 65/2021 (art. 5º)",
     MARGIN,
-    64,
+    hasOrg ? 72 : 64,
   );
+
+  // Linha 4 — subtítulo do tipo de relatório
   setText(doc, 10, "bold", COLOR_ACCENT);
-  doc.text(subtitle, MARGIN, 82);
+  doc.text(subtitle, MARGIN, hasOrg ? 88 : 82);
+
   doc.setDrawColor(...COLOR_RULE);
   doc.setLineWidth(0.6);
-  doc.line(MARGIN, 90, pageW - MARGIN, 90);
-  ctx.y = 104;
+  const ruleY = hasOrg ? 96 : 90;
+  doc.line(MARGIN, ruleY, pageW - MARGIN, ruleY);
+  ctx.y = ruleY + 14;
 }
 
 function drawSectionTitle(ctx: RenderCtx, label: string) {
@@ -306,8 +342,22 @@ async function drawProcessoCard(
 function drawFooter(doc: jsPDF, pageW: number, pageH: number) {
   const total = (doc as unknown as { internal: { getNumberOfPages: () => number } })
     .internal.getNumberOfPages();
+  const meta = getOrgMetadata();
+  const cnpjFmt = meta.cnpj ? fmtOrgCnpj(meta.cnpj) : "";
+  const rodapeOrg = [
+    cnpjFmt ? `CNPJ: ${cnpjFmt}` : null,
+    meta.endereco || null,
+  ]
+    .filter(Boolean)
+    .join("  ·  ");
   for (let p = 1; p <= total; p++) {
     doc.setPage(p);
+    // Linha superior do rodapé — órgão (cinza)
+    if (rodapeOrg) {
+      setText(doc, 7, "normal", COLOR_MUTED);
+      const lines = doc.splitTextToSize(rodapeOrg, pageW - MARGIN * 2);
+      doc.text(lines.slice(0, 1), pageW / 2, pageH - 30, { align: "center" });
+    }
     setText(doc, 7, "normal", COLOR_MUTED);
     doc.text(
       "Documento gerado automaticamente por Petrus IA · Lei 14.133/2021",
@@ -318,6 +368,105 @@ function drawFooter(doc: jsPDF, pageW: number, pageH: number) {
       align: "right",
     });
   }
+}
+
+// ---------------------- chart helper (donut) ----------------------
+
+/**
+ * Renderiza um donut chart simples em canvas e devolve dataURL PNG.
+ * Usado para a distribuição de fontes/parâmetros na cesta.
+ */
+function renderDonutChartDataUrl(
+  slices: Array<{ label: string; value: number }>,
+  size = 360,
+): string | null {
+  if (typeof document === "undefined") return null;
+  const total = slices.reduce((a, b) => a + b.value, 0);
+  if (total <= 0) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+
+  const cx = size / 2;
+  const cy = size / 2;
+  const rOuter = size * 0.42;
+  const rInner = size * 0.26;
+
+  let start = -Math.PI / 2;
+  slices.forEach((s, i) => {
+    const angle = (s.value / total) * Math.PI * 2;
+    const end = start + angle;
+    const [r, g, b] = CHART_PALETTE[i % CHART_PALETTE.length];
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(start) * rOuter, cy + Math.sin(start) * rOuter);
+    ctx.arc(cx, cy, rOuter, start, end, false);
+    ctx.lineTo(cx + Math.cos(end) * rInner, cy + Math.sin(end) * rInner);
+    ctx.arc(cx, cy, rInner, end, start, true);
+    ctx.closePath();
+    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+    ctx.fill();
+    start = end;
+  });
+  return canvas.toDataURL("image/png");
+}
+
+function drawDistribuicaoFontes(
+  ctx: RenderCtx,
+  slices: Array<{ label: string; value: number }>,
+) {
+  const filtered = slices.filter((s) => s.value > 0);
+  if (filtered.length === 0) return;
+  drawSectionTitle(ctx, "Distribuição dos parâmetros utilizados");
+
+  const url = renderDonutChartDataUrl(filtered, 360);
+  const total = filtered.reduce((a, b) => a + b.value, 0);
+  const chartSize = 130;
+  ensureSpace(ctx, chartSize + 8);
+  const startY = ctx.y;
+
+  if (url) {
+    ctx.doc.addImage(url, "PNG", MARGIN, startY, chartSize, chartSize);
+  }
+
+  // Legenda à direita
+  const legendX = MARGIN + chartSize + 16;
+  let ly = startY + 10;
+  filtered.forEach((s, i) => {
+    const [r, g, b] = CHART_PALETTE[i % CHART_PALETTE.length];
+    ctx.doc.setFillColor(r, g, b);
+    ctx.doc.rect(legendX, ly - 8, 10, 10, "F");
+    setText(ctx.doc, 9, "normal", COLOR_TITLE);
+    const pct = ((s.value / total) * 100).toFixed(1);
+    ctx.doc.text(`${s.label}`, legendX + 16, ly);
+    setText(ctx.doc, 9, "bold", COLOR_MUTED);
+    ctx.doc.text(`${pct}%  (${s.value})`, legendX + 16, ly + 11);
+    ly += 26;
+  });
+
+  ctx.y = startY + chartSize + 14;
+}
+
+function drawAssinatura(ctx: RenderCtx) {
+  const meta = getOrgMetadata();
+  if (!meta.responsavel) return;
+  ensureSpace(ctx, 80);
+  ctx.y += 30;
+  const { doc, pageW } = ctx;
+  const cx = pageW / 2;
+  doc.setDrawColor(...COLOR_TITLE);
+  doc.setLineWidth(0.6);
+  doc.line(cx - 110, ctx.y, cx + 110, ctx.y);
+  ctx.y += 12;
+  setText(doc, 10, "bold", COLOR_TITLE);
+  doc.text(meta.responsavel.toUpperCase(), cx, ctx.y, { align: "center" });
+  ctx.y += 12;
+  setText(doc, 8, "normal", COLOR_MUTED);
+  doc.text(meta.cargo || "Responsável pela Pesquisa de Preços", cx, ctx.y, {
+    align: "center",
+  });
+  ctx.y += 12;
 }
 
 function drawFundamentacao(ctx: RenderCtx) {
@@ -655,10 +804,17 @@ export function buildItemReport(
 ): ReportPlan {
   const itemDescricao = item.objetoEstruturado || item.titulo;
   const attachments = gatherAttachments(dossier, { mode: "item", itemDescricao });
-  const filename = `relatorio-item-${slug(itemDescricao)}.pdf`;
+  const fallback = `relatorio-item-${slug(itemDescricao)}.pdf`;
+  const getFilename = () =>
+    buildReportFilename({
+      tipo: "ITEM",
+      fallback,
+      suffix: itemDescricao,
+    });
 
   return {
-    filename,
+    filename: fallback,
+    getFilename,
     attachments,
     renderBase: async (selectedUrls) => {
       const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
@@ -730,6 +886,7 @@ export function buildItemReport(
       const selected = attachments.filter((a) => selectedUrls.has(a.url));
       drawFontesPage(ctx, selected, dossier?.urlCanonica);
 
+      drawAssinatura(ctx);
       drawFooter(doc, ctx.pageW, ctx.pageH);
       return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
     },
@@ -742,10 +899,17 @@ export function buildProcessReport(
 ): ReportPlan {
   const attachments = gatherAttachments(dossier, { mode: "process" });
   const orgaoSlug = slug(dossier.orgao || "processo");
-  const filename = `relatorio-processo-${orgaoSlug}-${dossier.ano ?? ""}-${dossier.sequencial ?? ""}.pdf`;
+  const fallback = `relatorio-processo-${orgaoSlug}-${dossier.ano ?? ""}-${dossier.sequencial ?? ""}.pdf`;
+  const getFilename = () =>
+    buildReportFilename({
+      tipo: "PROCESSO",
+      fallback,
+      suffix: `${dossier.sequencial ?? ""}-${dossier.ano ?? ""}`,
+    });
 
   return {
-    filename,
+    filename: fallback,
+    getFilename,
     attachments,
     renderBase: async (selectedUrls) => {
       const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
@@ -777,6 +941,7 @@ export function buildProcessReport(
       const selected = attachments.filter((a) => selectedUrls.has(a.url));
       drawFontesPage(ctx, selected, dossier.urlCanonica);
 
+      drawAssinatura(ctx);
       drawFooter(doc, ctx.pageW, ctx.pageH);
       return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
     },
@@ -821,10 +986,17 @@ export function buildBasketReport(
   }
 
   const date = new Date().toISOString().slice(0, 10);
-  const filename = `cesta-cotacao-${date}.pdf`;
+  const fallback = `cesta-cotacao-${date}.pdf`;
+  const getFilename = () =>
+    buildReportFilename({
+      tipo: "CESTA",
+      fallback,
+      suffix: date,
+    });
 
   return {
-    filename,
+    filename: fallback,
+    getFilename,
     attachments,
     renderBase: async (selectedUrls) => {
       const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
@@ -836,9 +1008,21 @@ export function buildBasketReport(
         y: 0,
       };
 
-      drawHeader(ctx, "Cesta de cotação — Nota Técnica de pesquisa de preços");
+      drawHeader(ctx, "Cesta de cotação — pesquisa de preços consolidada");
 
-      drawSectionTitle(ctx, "Resumo da cesta");
+      // I — OBJETO DA CONTRATAÇÃO
+      drawSectionTitle(ctx, "I — Objeto da pesquisa");
+      drawParagraph(
+        ctx,
+        "Escopo",
+        `A presente pesquisa de preços tem por objeto subsidiar a estimativa de ` +
+          `valores para ${rows.length} item(ns) consolidado(s) na cesta, com base em ` +
+          `contratações similares disponíveis nas fontes oficiais consultadas. Os ` +
+          `valores apurados foram tratados conforme os parâmetros da IN SEGES/ME nº 65/2021.`,
+      );
+
+      // II — RESUMO
+      drawSectionTitle(ctx, "II — Resumo da cesta");
       drawKeyValueGrid(
         ctx,
         [
@@ -850,7 +1034,11 @@ export function buildBasketReport(
         4,
       );
 
-      drawSectionTitle(ctx, "Itens consolidados");
+      // III — DISTRIBUIÇÃO DE FONTES (donut)
+      const dist = computeFontesDistribution(rows);
+      drawDistribuicaoFontes(ctx, dist);
+
+      drawSectionTitle(ctx, "III — Itens consolidados");
       ensureSpace(ctx, 40);
       autoTable(doc, {
         startY: ctx.y,
@@ -938,10 +1126,28 @@ export function buildBasketReport(
       const selected = attachments.filter((a) => selectedUrls.has(a.url));
       drawFontesPage(ctx, selected, undefined);
 
+      drawAssinatura(ctx);
       drawFooter(doc, ctx.pageW, ctx.pageH);
       return new Uint8Array(doc.output("arraybuffer") as ArrayBuffer);
     },
   };
+}
+
+/**
+ * Agrupa as linhas da cesta por "origem" (PNCP, Compras.gov, Painel, etc.)
+ * para o donut chart de distribuição de parâmetros.
+ */
+function computeFontesDistribution(
+  rows: BasketReportRow[],
+): Array<{ label: string; value: number }> {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const origem = (r.item.origem || "Outros").trim();
+    counts.set(origem, (counts.get(origem) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value);
 }
 
 // ---------------------- finalize: baixar PDFs + mesclar ----------------------
