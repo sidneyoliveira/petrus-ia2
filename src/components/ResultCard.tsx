@@ -1,7 +1,9 @@
-import { Award, Building2, Calendar, MapPin, Tag, ExternalLink, Bookmark, ThumbsUp, ThumbsDown, AlertTriangle, CheckCircle2, AlertCircle, HelpCircle, Database } from "lucide-react";
+import { Award, Building2, Calendar, MapPin, Tag, ExternalLink, Bookmark, ThumbsUp, ThumbsDown, AlertTriangle, CheckCircle2, AlertCircle, HelpCircle, Database, FileText, FolderDown, Loader2 } from "lucide-react";
 import type { PriceResult } from "@/lib/types";
 import { useServerFn } from "@tanstack/react-start";
 import { submitFeedback } from "@/lib/feedback.functions";
+import { buildProcessDossier } from "@/lib/report.functions";
+import { exportItemReportPdf, exportProcessReportPdf } from "@/lib/export-report-pdf";
 import { useState } from "react";
 
 function brl(v?: number | null) {
@@ -54,8 +56,40 @@ interface Props {
 
 export function ResultCard({ item, onOpen, onSave, saved, query }: Props) {
   const sendFeedback = useServerFn(submitFeedback);
+  const fetchDossier = useServerFn(buildProcessDossier);
   const [feedback, setFeedback] = useState<"accept" | "reject" | null>(null);
   const [sending, setSending] = useState(false);
+  const [reportLoading, setReportLoading] = useState<"item" | "process" | null>(null);
+
+  const handleReport = async (mode: "item" | "process") => {
+    if (reportLoading) return;
+    setReportLoading(mode);
+    try {
+      const dossier = await fetchDossier({
+        data: {
+          origem: item.origem,
+          url: item.url,
+          fallback: {
+            orgao: item.orgao,
+            modalidade: item.modalidade,
+            municipio: item.municipio,
+            uf: item.uf,
+            dataPublicacao: item.data,
+            objetoCompra: item.descricao,
+          },
+        },
+      });
+      if (mode === "item") {
+        await exportItemReportPdf(item, dossier);
+      } else {
+        await exportProcessReportPdf(dossier);
+      }
+    } catch (e) {
+      alert("Falha ao gerar relatório: " + (e as Error).message);
+    } finally {
+      setReportLoading(null);
+    }
+  };
 
   const handleFeedback = async (action: "accept" | "reject") => {
     if (feedback || sending) return;
@@ -212,6 +246,24 @@ export function ResultCard({ item, onOpen, onSave, saved, query }: Props) {
           Ver detalhes
         </button>
         <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => handleReport("item")}
+            disabled={reportLoading !== null}
+            title="Gerar PDF jurídico só deste item (com espelho do edital)"
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[11px] hover:bg-secondary disabled:opacity-60"
+          >
+            {reportLoading === "item" ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
+            PDF do item
+          </button>
+          <button
+            onClick={() => handleReport("process")}
+            disabled={reportLoading !== null}
+            title="Gerar PDF jurídico do processo inteiro (todos os itens + documentos oficiais)"
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[11px] hover:bg-secondary disabled:opacity-60"
+          >
+            {reportLoading === "process" ? <Loader2 className="h-3 w-3 animate-spin" /> : <FolderDown className="h-3 w-3" />}
+            PDF do processo
+          </button>
           <button
             onClick={() => handleFeedback("accept")}
             disabled={!!feedback || sending}
