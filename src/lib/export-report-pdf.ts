@@ -31,6 +31,7 @@ import {
   getOrgMetadata,
   type OrgMetadata,
 } from "./report-org";
+import { calculateBasketStats, type BasketStats } from "./basket-stats";
 
 // ---------------------- constants & utils ----------------------
 
@@ -1039,11 +1040,23 @@ export function buildBasketReport(
         4,
       );
 
+      // II.b — ANÁLISE ESTATÍSTICA (IN SEGES 65/2021)
+      const stats = calculateBasketStats(
+        rows
+          .map((r) => ({
+            id: r.item.id,
+            valor: typeof r.item.valor === "number" ? r.item.valor : 0,
+          }))
+          .filter((s) => s.valor > 0),
+      );
+      drawEstatisticas(ctx, stats);
+      const outlierIds = new Set(stats.outliers);
+
       // III — DISTRIBUIÇÃO DE FONTES (donut)
       const dist = computeFontesDistribution(rows);
       drawDistribuicaoFontes(ctx, dist);
 
-      drawSectionTitle(ctx, "III — Itens consolidados");
+      drawSectionTitle(ctx, "IV — Itens consolidados");
       ensureSpace(ctx, 40);
       autoTable(doc, {
         startY: ctx.y,
@@ -1052,9 +1065,11 @@ export function buildBasketReport(
         body: rows.map((r, i) => {
           const unit = typeof r.item.valor === "number" ? r.item.valor : null;
           const sub = unit !== null ? unit * r.quantidadeCotada : null;
+          const isOutlier = outlierIds.has(r.item.id);
           return [
             String(i + 1),
-            r.item.objetoEstruturado || r.item.titulo,
+            (isOutlier ? "[outlier] " : "") +
+              (r.item.objetoEstruturado || r.item.titulo),
             (r.item.unidade || "—").toUpperCase(),
             String(r.quantidadeCotada),
             brl(unit),
