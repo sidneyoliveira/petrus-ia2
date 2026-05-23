@@ -434,6 +434,171 @@ function drawWarnings(ctx: RenderCtx, warnings: string[]) {
 
 // ---------------------- API pública ----------------------
 
+/**
+ * Decide quais atas anexar com base na descrição do item.
+ * Se nada bate, devolve TODAS as atas (best-effort).
+ */
+function pickRelevantAtas(
+  atas: ProcessDossierAta[],
+  itemDescricao?: string,
+): ProcessDossierAta[] {
+  if (!atas || atas.length === 0) return [];
+  if (!itemDescricao || itemDescricao.length < 6) return atas;
+  const needle = itemDescricao.toLowerCase().slice(0, 60);
+  const filtered = atas.filter((a) =>
+    a.itens.some((it) => it.descricao.toLowerCase().includes(needle)),
+  );
+  return filtered.length > 0 ? filtered : atas;
+}
+
+/**
+ * Anexa PDFs externos (edital + atas selecionadas) ao final do doc jsPDF,
+ * gerando um único PDF mesclado via pdf-lib. Adiciona uma página separadora
+ * antes de cada documento embutido.
+ */
+async function mergeWithExternalPdfs(
+  jsPdfDoc: jsPDF,
+  attachments: Array<{ titulo: string; tipo: string; url: string }>,
+  filename: string,
+) {
+  // Sem anexos? Apenas salva.
+  if (attachments.length === 0) {
+    jsPdfDoc.save(filename);
+    return;
+  }
+
+  // Baixa todos em paralelo (com limite leve via Promise.all — atas/editais são poucos)
+  const fetched = await Promise.all(
+    attachments.map(async (a) => {
+      try {
+        const r = await fetchPncpDocument({ data: { url: a.url } });
+        return { meta: a, doc: r };
+      } catch (e) {
+        return {
+          meta: a,
+          doc: { ok: false, base64: "", contentType: "", size: 0, error: String(e) },
+        };
+      }
+    }),
+  );
+
+  // Para cada anexo bem-sucedido que seja PDF, adiciona uma página separadora antes
+  const pageW = jsPdfDoc.internal.pageSize.getWidth();
+  const pageH = jsPdfDoc.internal.pageSize.getHeight();
+
+  // Constrói lista final (com separadores) — descarta não-PDF
+  const validPdfs: Array<{ meta: (typeof fetched)[number]["meta"]; bytes: Uint8Array }> = [];
+  for (const f of fetched) {
+    if (!f.doc.ok) continue;
+    const isPdf =
+      /pdf/i.test(f.doc.contentType) ||
+      atob(f.doc.base64.slice(0, 8)).startsWith("%PDF");
+    if (!isPdf) continue;
+    const bin = atob(f.doc.base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    validPdfs.push({ meta: f.meta, bytes });
+  }
+
+  // Se nenhum PDF foi baixado, ainda registra um aviso no doc principal
+  if (validPdfs.length === 0) {
+    jsPdfDoc.addPage();
+    const ctx: RenderCtx = { doc: jsPdfDoc, pageW, pageH, y: 0 };
+    drawHeader(ctx, "Documentos oficiais não anexados");
+    setText(jsPdfDoc, 9, "normal", COLOR_MUTED);
+    ctx.y = 120;
+    jsPdfDoc.text(
+      "Os documentos da fonte não puderam ser baixados no momento da emissão.",
+      MARGIN,
+      ctx.y,
+    );
+    jsPdfDoc.save(filename);
+    return;
+  }
+
+  // Páginas separadoras + lista de anexos
+  for (const v of validPdfs) {
+    jsPdfDoc.addPage();
+    const ctx: RenderCtx = { doc: jsPdfDoc, pageW, pageH, y: 0 };
+    drawHeader(ctx, "Anexo — documento oficial integrado");
+    setText(jsPdfDoc, 7, "bold", COLOR_ACCENT);
+    jsPdfDoc.text(v.meta.tipo.toUpperCase(), MARGIN, 130);
+    setText(jsPdfDoc, 14, "bold", COLOR_TITLE);
+    const t = jsPdfDoc.splitTextToSize(v.meta.titulo, pageW - MARGIN * 2);
+    jsPdfDoc.text(t.slice(0, 4), MARGIN, 150);
+    setText(jsPdfDoc, 8, "normal", COLOR_MUTED);
+    jsPdfDoc.text(
+      "Documento original abaixo, mesclado a este relatório a partir da fonte PNCP.",
+      MARGIN,
+      220,
+    );
+    setText(jsPdfDoc, 7, "normal", COLOR_ACCENT);
+    const urlLines = jsPdfDoc.splitTextToSize(v.meta.url, pageW - MARGIN * 2);
+    jsPdfDoc.text(urlLines.slice(0, 3), MARGIN, 240);
+    jsPdfDoc.link(MARGIN, 232, pageW - MARGIN * 2, 24, { url: v.meta.url });
+  }
+
+  // Aplica numeração / rodapé considerando que ainda virão páginas mescladas depois
+  drawFooter(jsPdfDoc, pageW, pageH);
+
+  // Converte o jsPDF para bytes
+  const mainBytes = new Uint8Array(jsPdfDoc.output("arraybuffer") as ArrayBuffer);
+
+  // Mescla com pdf-lib
+  try {
+    const merged = await PDFDocument.load(mainBytes);
+    for (const v of validPdfs) {
+      try {
+        const ext = await PDFDocument.load(v.bytes, { ignoreEncryption: true });
+        const pages = await merged.copyPages(ext, ext.getPageIndices());
+        for (const p of pages) merged.addPage(p);
+      } catch {
+        // documento corrompido — ignora
+      }
+    }
+    const out = await merged.save();
+    const blob = new Blob([out as BlobPart], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  } catch {
+    // fallback: salva só o principal
+    jsPdfDoc.save(filename);
+  }
+}
+
+/** Reúne arquivos do processo + arquivos das atas selecionadas. */
+function collectAttachments(
+  dossier: ProcessDossier | null,
+  itemDescricao?: string,
+): Array<{ titulo: string; tipo: string; url: string }> {
+  if (!dossier) return [];
+  const out: Array<{ titulo: string; tipo: string; url: string }> = [];
+  for (const a of dossier.arquivos) out.push(a);
+  const relevantAtas = pickRelevantAtas(dossier.atas, itemDescricao);
+  for (const ata of relevantAtas) {
+    for (const a of ata.arquivos) {
+      out.push({
+        titulo: `Ata ${ata.numeroAta ?? ""} — ${a.titulo}`.trim(),
+        tipo: a.tipo,
+        url: a.url,
+      });
+    }
+  }
+  // dedupe por URL
+  const seen = new Set<string>();
+  return out.filter((a) => {
+    if (seen.has(a.url)) return false;
+    seen.add(a.url);
+    return true;
+  });
+}
+
 export async function exportProcessReportPdf(
   dossier: ProcessDossier,
   opts: { highlightItem?: number } = {},
@@ -447,8 +612,8 @@ export async function exportProcessReportPdf(
   };
 
   drawHeader(ctx, "Relatório consolidado do processo");
-  await drawCanonicalSource(ctx, dossier.origem, dossier.urlCanonica);
-  drawProcessoEspelho(ctx, dossier);
+  await drawProcessoCard(ctx, dossier, { origem: dossier.origem, url: dossier.urlCanonica });
+  drawValores(ctx, dossier);
 
   if (dossier.itens.length > 0) {
     drawSectionTitle(
@@ -460,26 +625,15 @@ export async function exportProcessReportPdf(
         ? new Set([opts.highlightItem])
         : undefined;
     drawItensTable(ctx, dossier.itens, highlight);
-  } else {
-    drawSectionTitle(ctx, "Itens do processo");
-    setText(ctx.doc, 9, "normal", COLOR_MUTED);
-    ensureSpace(ctx, 14);
-    ctx.doc.text(
-      "Itens estruturados não disponíveis na API da fonte. Consulte os documentos oficiais abaixo.",
-      MARGIN,
-      ctx.y,
-    );
-    ctx.y += 18;
   }
 
   drawArquivos(ctx, dossier.arquivos);
-  drawWarnings(ctx, dossier.warnings);
   drawFundamentacao(ctx);
-  drawFooter(doc, ctx.pageW, ctx.pageH);
 
   const orgaoSlug = slug(dossier.orgao || "processo");
   const fname = `relatorio-processo-${orgaoSlug}-${dossier.ano ?? ""}-${dossier.sequencial ?? ""}.pdf`;
-  doc.save(fname);
+  const attachments = collectAttachments(dossier);
+  await mergeWithExternalPdfs(doc, attachments, fname);
 }
 
 export async function exportItemReportPdf(
@@ -495,11 +649,10 @@ export async function exportItemReportPdf(
   };
 
   drawHeader(ctx, "Relatório de item — pesquisa de preço unitário");
-  await drawCanonicalSource(
-    ctx,
-    dossier?.origem || item.origem,
-    dossier?.urlCanonica || item.url,
-  );
+  await drawProcessoCard(ctx, dossier, {
+    origem: dossier?.origem || item.origem,
+    url: dossier?.urlCanonica || item.url,
+  });
 
   // Bloco do item específico
   drawSectionTitle(ctx, "Item pesquisado");
@@ -534,9 +687,8 @@ export async function exportItemReportPdf(
     2,
   );
 
-  // Espelho do processo
   if (dossier) {
-    drawProcessoEspelho(ctx, dossier);
+    drawValores(ctx, dossier);
 
     // Tabela com TODOS os itens do processo (destacando este)
     if (dossier.itens.length > 0) {
@@ -544,7 +696,6 @@ export async function exportItemReportPdf(
         ctx,
         `Demais itens do mesmo processo (${dossier.itens.length})`,
       );
-      // Tenta casar pelo número do item; se não dá, casa por descrição parcial
       const highlight = new Set<number>();
       const desc = (item.objetoEstruturado || item.titulo || "")
         .toLowerCase()
@@ -557,18 +708,13 @@ export async function exportItemReportPdf(
       drawItensTable(ctx, dossier.itens, highlight);
     }
     drawArquivos(ctx, dossier.arquivos);
-    drawWarnings(ctx, dossier.warnings);
-  } else {
-    drawWarnings(ctx, [
-      "Não foi possível buscar dados estruturados da fonte ao vivo. O relatório usa apenas as informações já extraídas no momento da pesquisa.",
-    ]);
   }
 
   drawFundamentacao(ctx);
-  drawFooter(doc, ctx.pageW, ctx.pageH);
 
   const fname = `relatorio-item-${slug(item.objetoEstruturado || item.titulo)}.pdf`;
-  doc.save(fname);
+  const attachments = collectAttachments(dossier, item.objetoEstruturado || item.titulo);
+  await mergeWithExternalPdfs(doc, attachments, fname);
 }
 
 /**
