@@ -1,67 +1,85 @@
-## Objetivo
+# Relatórios PDF por item / por processo (Lei 14.133)
 
-Hoje `searchPrices` aguarda **todas** as fontes terminarem antes de devolver qualquer item (5min para 1000 itens = tela em branco). Vamos transformar a busca em um stream: cada fonte que termina **empurra** seus itens para o navegador, que vai re-rankeando e mostrando em tempo real. O resultado final (com cache e telemetria) continua igual ao de hoje.
+## Decisões técnicas importantes
 
-## Arquitetura
+**Screenshot da página do edital.** O runtime é Cloudflare Workers — `puppeteer`/`playwright`/`sharp` não rodam. Em vez de tentar abrir um navegador headless, vou gerar um **"Espelho do Edital"** dentro do PDF: uma página renderizada com a marca PNCP/portal de origem, contendo todos os dados oficiais (órgão, CNPJ, modalidade, número, data, objeto completo, situação) **buscados ao vivo na API JSON do PNCP** (`/api/consulta/v1/contratacoes/publicacao` + `/itens` + `/arquivos`). Isso é juridicamente mais defensável que um print: o conteúdo é o oficial, com URL canônica e QR Code apontando para o original. Em rodapé: "Este espelho reproduz os dados oficiais da fonte indicada — consulte o link/QR Code para o original."
+
+Se você realmente precisar do print visual, isso requer um serviço externo (ex: ScreenshotAPI, Browserless) pago e fora do escopo do Workers. Posso adicionar depois como segundo passo se confirmar.
+
+**Fontes que não são PNCP** (TCE-CE, M2A, Transparência) não têm API de detalhe estruturada. Para esses, o "Espelho" usa apenas os dados que já foram extraídos (`PriceResult`) + link canônico.
+
+## Entregáveis
+
+### 1. Server function `buildProcessDossier` (`src/lib/report.functions.ts`)
+Entrada: `{ origem, url, cnpj?, ano?, sequencial? }`. Saída (DTO serializável):
+- `processo`: órgão, CNPJ, modalidade, número, ano, data publicação, data abertura, objeto completo, situação, valor estimado total
+- `itens[]`: todos os itens do processo (do PNCP `/itens`) com qtd, unidade, valor estimado e homologado, fornecedor (se houver `/resultados`)
+- `arquivos[]`: lista de documentos oficiais (edital, ata, homologação, contrato) — endpoint `/api/pncp/v1/orgaos/{cnpj}/compras/{ano}/{seq}/arquivos`, com URL pública pra cada um
+- `urlCanonica`: link pra página pública do edital no PNCP
+
+### 2. Geradores PDF (`src/lib/export-report-pdf.ts`)
+Duas funções públicas:
+
+- `exportItemReportPdf(item, dossier?)` — relatório de **1 item** específico
+- `exportProcessReportPdf(dossier, items)` — relatório de **todos os itens do processo**
+
+Layout (A4 retrato, margens 40pt, quebra automática):
 
 ```text
-Navegador (/buscar)
-   │  POST /api/public/search/stream  (body = filtros)
-   ▼
-TSS server route (SSE: text/event-stream)
-   │
-   ├─ dispara cada tarefa do pipeline em paralelo
-   │     (PNCP × 3 páginas, M2A, Portal CP, Firecrawl, mining, etc.)
-   │
-   ├─ a cada Promise que resolve:
-   │     1) anexa os RawItem ao buffer global
-   │     2) roda enrich+rank+dedup INCREMENTAL no buffer
-   │     3) emite `event: snapshot` com top-N resultados atuais
-   │     4) emite `event: source` com {name, status, count}
-   │
-   └─ quando todas resolvem:
-         - persiste cache (igual hoje)
-         - emite `event: done` com payload final + tookMs + sources
-         - fecha o stream
+┌────────────────────────────────────────────────┐
+│ RELATÓRIO TÉCNICO DE PESQUISA DE PREÇOS        │
+│ Lei 14.133/2021 · IN SEGES/ME 65/2021          │
+│ Emitido em DD/MM/AAAA HH:MM                    │
+├────────────────────────────────────────────────┤
+│ ESPELHO DO EDITAL — FONTE: PNCP                │
+│ Órgão · CNPJ · Modalidade · Nº · Ano           │
+│ Data publicação · Situação                     │
+│ Objeto: [texto completo, wrapping]             │
+│ URL: https://pncp.gov.br/...    [QR Code]      │
+├────────────────────────────────────────────────┤
+│ ITENS                                           │
+│ Tabela: #, descrição, un., qtd, v. unit.       │
+│ estimado, v. unit. homologado, fornecedor      │
+│ — autoTable com quebra de página automática    │
+├────────────────────────────────────────────────┤
+│ DOCUMENTOS OFICIAIS DA FONTE                   │
+│ • Edital — link                                │
+│ • Ata de realização — link                     │
+│ • Termo de homologação — link                  │
+│ • Contrato — link                              │
+├────────────────────────────────────────────────┤
+│ FUNDAMENTAÇÃO LEGAL                            │
+│ Texto curto: art. 23 §1º incisos I-V da Lei    │
+│ 14.133/2021 — preferência por preços de        │
+│ contratações similares de outros entes         │
+│ públicos no PNCP (inciso I).                   │
+├────────────────────────────────────────────────┤
+│ Rodapé: paginação · gerado por Petrus IA       │
+└────────────────────────────────────────────────┘
 ```
 
-## Mudanças por arquivo
+Para o **QR Code** vou adicionar `qrcode` (10KB, pure JS, roda em browser).
 
-**1. `src/lib/search/pipeline.server.ts`** (refactor mínimo)
-- Expor um helper novo `rankPartial(raw, data, apiKey, catalog)` que recebe o array bruto acumulado e devolve `PriceResult[]` rankeado — basicamente o que hoje vive em `searchPrices` entre as linhas 213–366, extraído para uma função pura. Sem mudar comportamento.
-- Expor `buildTaskList(data, catalog, apiKey)` que devolve `Array<{ name: string; run: () => Promise<RawItem[]> }>` — a mesma lista de `tasks` que hoje vive inline, agora nomeada por fonte.
+### 3. UI
 
-**2. `src/routes/api/public/search/stream.ts`** (novo)
-- TSS server route POST que aceita o `FilterSchema`.
-- Lê cache primeiro: se HIT e não-`forceRefresh`, manda um único `event: done` com o cache e fecha (mantém latência zero da UX cacheada).
-- Caso contrário, abre `ReadableStream`, chama `buildTaskList`, escuta cada `task.run()` com `Promise.allSettled` mas via loop assíncrono — para cada resolução: acumula raw, chama `rankPartial`, emite `snapshot` + `source`. No final emite `done` e grava cache.
-- Auth: opcional — a rota fica em `/api/public/*` para não exigir bearer; validação Zod no body. (mesmo nível de exposição do serverFn atual, que também é callable sem login).
+- **`ResultCard`**: novo menu compacto com dois itens — "Relatório deste item (PDF)" e "Relatório do processo completo (PDF)". Mostra spinner enquanto busca o dossier.
+- **`ResultModal`**: mesmos dois botões, mais proeminentes.
+- **`cotacao.tsx`** (cesta): substituo o PDF atual pelo novo gerador, agora com seção "Espelho do edital" por item agrupado por processo + lista de documentos oficiais por processo.
 
-**3. `src/lib/search-stream.ts`** (novo, client-only)
-- Hook `useSearchStream(filters, enabled)` que retorna `{ items, sources, done, error, tookMs }`.
-- Internamente: `fetch('/api/public/search/stream', { method: 'POST', body: JSON.stringify(filters) })`, lê o `response.body` com `getReader()`, parseia eventos SSE, atualiza estado React via `useState` + `useReducer`.
-- Aborta com `AbortController` quando filtros mudam ou o componente desmonta.
+### 4. Arquivos novos / alterados
 
-**4. `src/routes/buscar.tsx`** (substituição cirúrgica)
-- Remove o `useQuery({ queryFn: () => callSearch(...) })` da busca principal.
-- Mantém `searchDbItems` (DB-first) intocado.
-- Plugin `useSearchStream` no lugar; `data.results` agora vem do estado do hook.
-- `isFetching` vira `!done && items.length === 0`; passamos a mostrar um indicador "buscando em N fontes · X itens encontrados…" no topo enquanto `!done`.
+- novo: `src/lib/report.functions.ts` (server fn `buildProcessDossier`)
+- novo: `src/lib/export-report-pdf.ts`
+- alterado: `src/components/ResultCard.tsx`, `src/components/ResultModal.tsx`, `src/routes/cotacao.tsx`
+- novo dep: `qrcode` + `@types/qrcode`
 
-**5. `src/lib/search.functions.ts`** (mantido)
-- O serverFn `searchPrices` continua existindo para compatibilidade (export PDF, rota `/cotacao`, refresh em background do cache). Internamente passa a usar os helpers extraídos em #1, sem mudança de contrato.
+### 5. QA
 
-## Detalhes técnicos
+Após gerar, vou disparar uma exportação de teste contra um PNCP real, converter o PDF pra imagem com `pdftoppm` e inspecionar margens, quebras e dados. Itero até passar.
 
-- **Cloudflare Workers + SSE**: `ReadableStream` é nativo e suportado. Headers obrigatórios: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`. Não usar compressão.
-- **Backpressure**: emitir snapshot só a cada 500ms (debounce) ou quando uma fonte nova chega — evita inundar a UI quando várias fontes resolvem juntas.
-- **Re-ranking incremental**: `rankPartial` é O(n log n) no tamanho atual do buffer (~poucos milhares no pior caso). Roda a cada source completion (~10-15 vezes por busca). Custo desprezível.
-- **Cache**: gravado apenas no `done`, igual hoje. Snapshots intermediários **não** vão para o cache.
-- **Erros por fonte**: continuam silenciados (igual hoje); o painel de telemetria mostra falha.
-- **Erro fatal do stream**: emite `event: error` e fecha. Frontend mostra toast.
+## Posso seguir?
 
-## Fora do escopo
+Confirme dois pontos:
 
-- Manter `searchPrices` como serverFn (não vamos quebrar `/cotacao` nem o refresh em background).
-- Nada muda nas fontes/pipelines individuais — só na orquestração.
-- Sem mudanças visuais além do indicador de progresso "X fontes · Y itens".
+1. **Espelho do edital com dados oficiais (sem print real)** — OK ou você quer mesmo um print visual via serviço pago?
+2. **Cesta**: substituir o PDF atual pelo novo formato enriquecido, ou manter o atual e adicionar um botão extra "Relatório completo"?
