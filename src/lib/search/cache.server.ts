@@ -93,6 +93,24 @@ export async function writeCachedSearch(opts: {
   tookMs: number;
   results: PriceResult[];
 }): Promise<void> {
+  // Guarda IN 65/2021: se a busca atual veio vazia (todas as fontes falharam
+  // ou nenhuma retornou item) e já existe um snapshot anterior ainda fresco,
+  // NÃO sobrescreve — preserva o cache bom anterior. Evita degradar UX por
+  // indisponibilidade momentânea de PNCP / Compras.gov / TCEs.
+  if (opts.results.length === 0) {
+    const { data: existing } = await supabaseAdmin
+      .from("quote_searches")
+      .select("id,total,fresh_until")
+      .eq("query_norm", opts.query_norm)
+      .eq("filters_hash", opts.filters_hash)
+      .maybeSingle();
+    if (existing && existing.total > 0) {
+      console.warn(
+        `[cache] preservando snapshot anterior de "${opts.query_norm}" (${existing.total} itens) — busca atual veio vazia`,
+      );
+      return;
+    }
+  }
   try {
     const { data: search, error } = await supabaseAdmin
       .from("quote_searches")
