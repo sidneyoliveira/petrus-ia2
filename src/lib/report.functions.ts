@@ -325,16 +325,18 @@ export const buildProcessDossier = createServerFn({ method: "POST" })
         objetoCompra: data.fallback?.objetoCompra,
         itens: [],
         arquivos: [],
+        atas: [],
         liveData: false,
         warnings,
       };
     }
 
     // PNCP: busca paralela detalhe + itens + arquivos
-    const [detalhe, itensRaw, arquivos] = await Promise.all([
+    const [detalhe, itensRaw, arquivos, atas] = await Promise.all([
       fetchCompraDetalhe(cnpj, ano, sequencial),
       fetchCompraItens(cnpj, ano, sequencial),
       fetchCompraArquivos(cnpj, ano, sequencial),
+      fetchCompraAtas(cnpj, ano, sequencial).catch(() => [] as ProcessDossierAta[]),
     ]);
 
     if (!detalhe) {
