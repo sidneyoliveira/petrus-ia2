@@ -798,7 +798,7 @@ export function buildItemReport(
     attachments,
     renderBase: async (selectedUrls) => {
       const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-      installBoldShim(doc);
+      await ensurePdfFonts(doc);
       const ctx: RenderCtx = {
         doc,
         pageW: doc.internal.pageSize.getWidth(),
@@ -893,7 +893,7 @@ export function buildProcessReport(
     attachments,
     renderBase: async (selectedUrls) => {
       const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-      installBoldShim(doc);
+      await ensurePdfFonts(doc);
       const ctx: RenderCtx = {
         doc,
         pageW: doc.internal.pageSize.getWidth(),
@@ -980,7 +980,7 @@ export function buildBasketReport(
     attachments,
     renderBase: async (selectedUrls) => {
       const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-      installBoldShim(doc);
+      await ensurePdfFonts(doc);
       const ctx: RenderCtx = {
         doc,
         pageW: doc.internal.pageSize.getWidth(),
