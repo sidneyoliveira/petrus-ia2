@@ -818,9 +818,9 @@ export async function exportBasketReportPdf(
 
     doc.addPage();
     ctx.y = MARGIN;
-    drawHeader(ctx, `Espelho do processo — ${d.orgao ?? "—"}`);
-    await drawCanonicalSource(ctx, d.origem, d.urlCanonica);
-    drawProcessoEspelho(ctx, d);
+    drawHeader(ctx, "Espelho do processo");
+    await drawProcessoCard(ctx, d, { origem: d.origem, url: d.urlCanonica });
+    drawValores(ctx, d);
     if (d.itens.length > 0) {
       drawSectionTitle(ctx, `Itens do processo (${d.itens.length})`);
       const highlight = new Set<number>();
@@ -835,7 +835,6 @@ export async function exportBasketReportPdf(
       drawItensTable(ctx, d.itens, highlight);
     }
     drawArquivos(ctx, d.arquivos);
-    drawWarnings(ctx, d.warnings);
   }
 
   // Última página: fundamentação
@@ -843,8 +842,19 @@ export async function exportBasketReportPdf(
   ctx.y = MARGIN;
   drawHeader(ctx, "Encerramento");
   drawFundamentacao(ctx);
-  drawFooter(doc, ctx.pageW, ctx.pageH);
 
   const date = new Date().toISOString().slice(0, 10);
-  doc.save(`cesta-cotacao-${date}.pdf`);
+  // Anexa edital + atas de cada processo distinto à cesta
+  const allAttachments: Array<{ titulo: string; tipo: string; url: string }> = [];
+  const seenProc = new Set<string>();
+  for (const r of rows) {
+    if (!r.dossier) continue;
+    const k = r.dossier.urlCanonica || `${r.dossier.cnpj}-${r.dossier.ano}-${r.dossier.sequencial}`;
+    if (seenProc.has(k)) continue;
+    seenProc.add(k);
+    allAttachments.push(
+      ...collectAttachments(r.dossier, r.item.objetoEstruturado || r.item.titulo),
+    );
+  }
+  await mergeWithExternalPdfs(doc, allAttachments, `cesta-cotacao-${date}.pdf`);
 }
