@@ -438,11 +438,29 @@ function CotacaoPage() {
   );
 }
 
-function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function Stat({
+  label,
+  value,
+  accent,
+  tone,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+  tone?: "neutral" | "success" | "danger";
+}) {
+  const toneCls =
+    tone === "success"
+      ? "text-success"
+      : tone === "danger"
+        ? "text-destructive"
+        : accent
+          ? "text-accent"
+          : "";
   return (
     <div className="min-w-0">
       <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
-      <div className={`text-base font-semibold tabular-nums truncate ${accent ? "text-accent" : ""}`} title={value}>{value}</div>
+      <div className={`text-base font-semibold tabular-nums truncate ${toneCls}`} title={value}>{value}</div>
     </div>
   );
 }
