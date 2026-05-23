@@ -373,7 +373,73 @@ export const buildProcessDossier = createServerFn({ method: "POST" })
       valorTotalHomologado: brl(detalhe?.valorTotalHomologado),
       itens,
       arquivos,
+      atas,
       liveData: Boolean(detalhe) || itens.length > 0,
       warnings,
     };
+  });
+
+// ---------------------- Download de PDFs (PNCP) ----------------------
+
+const FetchDocInput = z.object({ url: z.string().url() });
+
+export interface FetchedDocument {
+  base64: string;
+  contentType: string;
+  size: number;
+  ok: boolean;
+  error?: string;
+}
+
+const MAX_DOC_BYTES = 15 * 1024 * 1024;
+
+export const fetchPncpDocument = createServerFn({ method: "POST" })
+  .inputValidator((input: z.input<typeof FetchDocInput>) => FetchDocInput.parse(input))
+  .handler(async ({ data }): Promise<FetchedDocument> => {
+    let host = "";
+    try {
+      host = new URL(data.url).hostname.toLowerCase();
+    } catch {
+      return { base64: "", contentType: "", size: 0, ok: false, error: "URL inválida" };
+    }
+    if (!/(^|\.)pncp\.gov\.br$/.test(host)) {
+      return { base64: "", contentType: "", size: 0, ok: false, error: "Domínio não permitido" };
+    }
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 25_000);
+      const res = await fetch(data.url, {
+        headers: {
+          Accept: "application/pdf,*/*",
+          "User-Agent": "Petrus-IA-ReportFetcher/1.0",
+        },
+        signal: ctrl.signal,
+        redirect: "follow",
+      });
+      clearTimeout(timer);
+      if (!res.ok) {
+        return { base64: "", contentType: "", size: 0, ok: false, error: `HTTP ${res.status}` };
+      }
+      const contentType = res.headers.get("content-type") || "application/octet-stream";
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength > MAX_DOC_BYTES) {
+        return { base64: "", contentType, size: buf.byteLength, ok: false, error: "Arquivo muito grande" };
+      }
+      const bytes = new Uint8Array(buf);
+      let bin = "";
+      const CHUNK = 0x8000;
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+      }
+      const base64 = btoa(bin);
+      return { base64, contentType, size: buf.byteLength, ok: true };
+    } catch (e) {
+      return {
+        base64: "",
+        contentType: "",
+        size: 0,
+        ok: false,
+        error: e instanceof Error ? e.message : "Falha de rede",
+      };
+    }
   });
