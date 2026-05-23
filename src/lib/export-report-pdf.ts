@@ -31,6 +31,7 @@ import {
   getOrgMetadata,
   type OrgMetadata,
 } from "./report-org";
+import { calculateBasketStats, type BasketStats } from "./basket-stats";
 
 // ---------------------- constants & utils ----------------------
 
@@ -1039,11 +1040,23 @@ export function buildBasketReport(
         4,
       );
 
+      // II.b — ANÁLISE ESTATÍSTICA (IN SEGES 65/2021)
+      const stats = calculateBasketStats(
+        rows
+          .map((r) => ({
+            id: r.item.id,
+            valor: typeof r.item.valor === "number" ? r.item.valor : 0,
+          }))
+          .filter((s) => s.valor > 0),
+      );
+      drawEstatisticas(ctx, stats);
+      const outlierIds = new Set(stats.outliers);
+
       // III — DISTRIBUIÇÃO DE FONTES (donut)
       const dist = computeFontesDistribution(rows);
       drawDistribuicaoFontes(ctx, dist);
 
-      drawSectionTitle(ctx, "III — Itens consolidados");
+      drawSectionTitle(ctx, "IV — Itens consolidados");
       ensureSpace(ctx, 40);
       autoTable(doc, {
         startY: ctx.y,
@@ -1052,9 +1065,11 @@ export function buildBasketReport(
         body: rows.map((r, i) => {
           const unit = typeof r.item.valor === "number" ? r.item.valor : null;
           const sub = unit !== null ? unit * r.quantidadeCotada : null;
+          const isOutlier = outlierIds.has(r.item.id);
           return [
             String(i + 1),
-            r.item.objetoEstruturado || r.item.titulo,
+            (isOutlier ? "[outlier] " : "") +
+              (r.item.objetoEstruturado || r.item.titulo),
             (r.item.unidade || "—").toUpperCase(),
             String(r.quantidadeCotada),
             brl(unit),
@@ -1153,6 +1168,68 @@ function computeFontesDistribution(
   return Array.from(counts.entries())
     .map(([label, value]) => ({ label, value }))
     .sort((a, b) => b.value - a.value);
+}
+
+// ---------------------- estatísticas (IN 65/2021) ----------------------
+
+/**
+ * Desenha o bloco "Análise estatística (IN 65/2021)" com média, mediana,
+ * desvio, CV e classificação de homogeneidade. Inclui um cartão colorido
+ * com a recomendação técnica.
+ */
+function drawEstatisticas(ctx: RenderCtx, stats: BasketStats) {
+  if (stats.n === 0) return;
+  drawSectionTitle(ctx, "III — Análise estatística (IN SEGES 65/2021)");
+
+  drawKeyValueGrid(
+    ctx,
+    [
+      ["Amostra considerada", `${stats.n} de ${stats.nBruto} cotações`],
+      ["Mínimo", brl(stats.min)],
+      ["Máximo", brl(stats.max)],
+      ["Média", brl(stats.media)],
+      ["Mediana", brl(stats.mediana)],
+      ["Desvio padrão", brl(stats.desvio)],
+      ["Coef. variação (CV)", `${stats.coeficienteVariacao.toFixed(1)} %`],
+      ["Outliers (IQR)", stats.outliers.length ? String(stats.outliers.length) : "nenhum"],
+    ],
+    4,
+  );
+
+  // Cartão colorido com recomendação
+  const { doc, pageW } = ctx;
+  const boxX = MARGIN;
+  const boxW = pageW - MARGIN * 2;
+  const boxH = 44;
+  ensureSpace(ctx, boxH + 10);
+
+  // Verde se CV ≤ 15, âmbar até 25, vermelho acima.
+  const cv = stats.coeficienteVariacao;
+  let fill: [number, number, number];
+  let border: [number, number, number];
+  let label: string;
+  if (stats.n < 3) {
+    fill = [254, 243, 199]; border = [202, 138, 4]; label = "ATENÇÃO";
+  } else if (cv <= 15) {
+    fill = [220, 252, 231]; border = [22, 163, 74]; label = "ÓTIMO";
+  } else if (cv <= 25) {
+    fill = [219, 234, 254]; border = [37, 99, 235]; label = "CONFORME";
+  } else {
+    fill = [254, 226, 226]; border = [220, 38, 38]; label = "REVISAR";
+  }
+
+  doc.setFillColor(...fill);
+  doc.setDrawColor(...border);
+  doc.setLineWidth(0.8);
+  doc.roundedRect(boxX, ctx.y, boxW, boxH, 5, 5, "FD");
+
+  setText(doc, 7, "bold", border);
+  doc.text(label, boxX + 12, ctx.y + 14);
+  setText(doc, 9, "normal", [0, 0, 0]);
+  const lines = doc.splitTextToSize(stats.recomendacao, boxW - 24);
+  doc.text(lines.slice(0, 2), boxX + 12, ctx.y + 28);
+
+  ctx.y += boxH + 12;
 }
 
 // ---------------------- finalize: baixar PDFs + mesclar ----------------------
