@@ -409,8 +409,11 @@ function drawItensTable(
         data.section === "body" &&
         highlightNumeros.has(Number((data.row.raw as string[])[0]))
       ) {
+        // Não usar fontStyle "bold" aqui — jsPDF tem bug de espaçamento
+        // após chars acentuados em helvetica/times bold. Destacamos só
+        // pela cor de fundo + texto mais escuro.
         data.cell.styles.fillColor = [254, 243, 199];
-        data.cell.styles.fontStyle = "bold";
+        data.cell.styles.textColor = [30, 41, 59];
       }
     },
   });
