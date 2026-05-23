@@ -752,7 +752,7 @@ function LiveSourceMonitor({
         {inflight.map((s) => (
           <span
             key={`run-${s.name}`}
-            className="inline-flex items-center gap-1 rounded-md border border-blue-400/40 bg-blue-500/10 px-1.5 py-0.5 text-blue-600 dark:text-blue-300"
+            className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-primary"
           >
             <Loader2 className="h-2.5 w-2.5 animate-spin" />
             {s.name}
@@ -761,10 +761,10 @@ function LiveSourceMonitor({
         {sources.slice().reverse().map((s, i) => {
           const cls =
             s.status === "ok"
-              ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              ? "border-success/40 bg-success/10 text-success"
               : s.status === "empty"
                 ? "border-border bg-muted/40 text-muted-foreground"
-                : "border-red-400/40 bg-red-500/10 text-red-600 dark:text-red-300";
+                : "border-destructive/40 bg-destructive/10 text-destructive";
           const icon = s.status === "ok" ? "✓" : s.status === "empty" ? "∅" : "✗";
           return (
             <span

@@ -418,9 +418,9 @@ function ItemsExtractedPanel({
                       <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{brl2(it.valor_total)}</td>
                       <td className="px-2 py-1.5 text-center">
                         {it.validacao_matematica === "ok" ? (
-                          <CheckCircle2 className="inline h-3.5 w-3.5 text-emerald-600" aria-label="Matemática OK" />
+                          <CheckCircle2 className="inline h-3.5 w-3.5 text-success" aria-label="Matemática OK" />
                         ) : it.validacao_matematica === "divergente" ? (
-                          <AlertTriangle className="inline h-3.5 w-3.5 text-amber-500" aria-label="Divergente" />
+                          <AlertTriangle className="inline h-3.5 w-3.5 text-warning" aria-label="Divergente" />
                         ) : (
                           <MinusCircle className="inline h-3.5 w-3.5 text-muted-foreground" aria-label="Sem validação" />
                         )}
@@ -434,7 +434,7 @@ function ItemsExtractedPanel({
 
           {data.relatorio_confiabilidade.avisos && data.itens_extraidos.length > 0 && (
             <div className="mt-2 text-[11px] text-muted-foreground flex items-start gap-1.5">
-              <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0 text-amber-500" />
+              <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0 text-warning" />
               <span>{data.relatorio_confiabilidade.avisos}</span>
             </div>
           )}

@@ -424,7 +424,7 @@ function HarvestSection() {
                   <button
                     type="button"
                     onClick={() => toggleM.mutate({ id: q.id, enabled: !q.enabled })}
-                    className={`text-[10px] px-2 py-0.5 rounded-full ${q.enabled ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-400" : "bg-muted text-muted-foreground"}`}
+                    className={`text-[10px] px-2 py-0.5 rounded-full ${q.enabled ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"}`}
                   >
                     {q.enabled ? "ativo" : "pausado"}
                   </button>
@@ -475,7 +475,7 @@ function HarvestSection() {
                   <td className="px-2 py-1">{r.term}</td>
                   <td className="px-2 py-1 text-muted-foreground">{new Date(r.started_at).toLocaleString("pt-BR")}</td>
                   <td className="px-2 py-1">
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] ${r.status === "ok" ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-400" : r.status === "error" ? "bg-destructive/20 text-destructive" : "bg-muted"}`}>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] ${r.status === "ok" ? "bg-success/15 text-success" : r.status === "error" ? "bg-destructive/20 text-destructive" : "bg-muted"}`}>
                       {r.status}
                     </span>
                     {r.error && <span className="ml-2 text-destructive">{r.error.slice(0, 60)}</span>}
