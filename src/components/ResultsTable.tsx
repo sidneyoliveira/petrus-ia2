@@ -140,7 +140,18 @@ export function ResultsTable({
                     <TableCell className="text-right tabular-nums text-sm">
                       {fmtQty(item.quantidade)}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums text-sm font-medium">
+                    <TableCell
+                      className={`text-right tabular-nums text-sm font-medium ${
+                        item.mathStatus === "divergente"
+                          ? "outline outline-1 outline-destructive/40 bg-destructive/5 rounded-sm"
+                          : ""
+                      }`}
+                      title={
+                        item.mathStatus === "divergente" && typeof item.quantidade === "number" && typeof item.valor === "number"
+                          ? `Qtd ${item.quantidade} × Unit. ${brl(item.valor)} = ${brl(item.quantidade * item.valor)} · Total declarado: ${brl(item.valorTotal)}`
+                          : undefined
+                      }
+                    >
                       {item.valorTipo === "global" ? (
                         <span className="text-muted-foreground line-through decoration-destructive/60">
                           {brl(item.valor)}
@@ -149,7 +160,13 @@ export function ResultsTable({
                         brl(item.valor)
                       )}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums text-sm">
+                    <TableCell
+                      className={`text-right tabular-nums text-sm ${
+                        item.mathStatus === "divergente"
+                          ? "outline outline-1 outline-destructive/40 bg-destructive/5 rounded-sm"
+                          : ""
+                      }`}
+                    >
                       {brl(item.valorTotal ?? item.valorTotalCalculado)}
                     </TableCell>
                     <TableCell className="text-center">
