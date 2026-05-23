@@ -80,6 +80,7 @@ export function ResultsTable({
               <TableHead className="w-24 text-right">Qtd</TableHead>
               <TableHead className="w-32 text-right">Unitário</TableHead>
               <TableHead className="w-32 text-right">Total</TableHead>
+              <TableHead className="w-20 text-center">Mat.</TableHead>
               <TableHead className="min-w-[180px]">Órgão / UF</TableHead>
               <TableHead className="w-28">Data</TableHead>
               <TableHead className="min-w-[180px]">Fornecedor</TableHead>
