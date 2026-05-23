@@ -77,6 +77,33 @@ function humanSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function OrgField({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <label className="block">
+      <span className="block text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">
+        {label}
+      </span>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+      />
+    </label>
+  );
+}
+
 export function ReportPreviewDialog({ plan, onClose }: Props) {
   const [selectedUrls, setSelectedUrls] = useState<Set<string>>(
     () => new Set(plan?.attachments.filter((a) => a.recommended).map((a) => a.url)),
