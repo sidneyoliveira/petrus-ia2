@@ -1,10 +1,12 @@
-import { X, ExternalLink, Award, FileSearch, Loader2, Sparkles, CheckCircle2, AlertTriangle, MinusCircle, Highlighter } from "lucide-react";
+import { X, ExternalLink, Award, FileSearch, Loader2, Sparkles, CheckCircle2, AlertTriangle, MinusCircle, Highlighter, FileText, FolderDown } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import type { PriceResult } from "@/lib/types";
 import { ScoreBar } from "./ScoreBar";
 import { extractItemsFromDocument, type ExtractResponse } from "@/lib/extract.functions";
 import { buildHighlightUrl } from "@/lib/highlight-source";
+import { buildProcessDossier } from "@/lib/report.functions";
+import { exportItemReportPdf, exportProcessReportPdf } from "@/lib/export-report-pdf";
 
 function brl(v?: number | null) {
   if (typeof v !== "number") return "—";
@@ -31,6 +33,8 @@ export function ResultModal({ item, onClose }: Props) {
   const [aiData, setAiData] = useState<ExtractResponse | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const runExtract = useServerFn(extractItemsFromDocument);
+  const fetchDossier = useServerFn(buildProcessDossier);
+  const [reportLoading, setReportLoading] = useState<"item" | "process" | null>(null);
 
   useEffect(() => {
     if (!item) return;
@@ -49,6 +53,36 @@ export function ResultModal({ item, onClose }: Props) {
   }, [item, onClose]);
 
   if (!item) return null;
+
+  const handleReport = async (mode: "item" | "process") => {
+    if (reportLoading) return;
+    setReportLoading(mode);
+    try {
+      const dossier = await fetchDossier({
+        data: {
+          origem: item.origem,
+          url: item.url,
+          fallback: {
+            orgao: item.orgao,
+            modalidade: item.modalidade,
+            municipio: item.municipio,
+            uf: item.uf,
+            dataPublicacao: item.data,
+            objetoCompra: item.descricao,
+          },
+        },
+      });
+      if (mode === "item") {
+        await exportItemReportPdf(item, dossier);
+      } else {
+        await exportProcessReportPdf(dossier);
+      }
+    } catch (e) {
+      alert("Falha ao gerar relatório: " + (e as Error).message);
+    } finally {
+      setReportLoading(null);
+    }
+  };
 
   const runOcr = async () => {
     if (!item.url) return;
@@ -193,6 +227,24 @@ export function ResultModal({ item, onClose }: Props) {
                       Ver Fonte com Destaque
                     </a>
                   )}
+                  <button
+                    onClick={() => handleReport("item")}
+                    disabled={reportLoading !== null}
+                    title="Relatório jurídico em PDF deste item (Lei 14.133)"
+                    className="inline-flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-3.5 py-1.5 text-xs font-semibold text-primary hover:bg-primary/15 transition-smooth disabled:opacity-60"
+                  >
+                    {reportLoading === "item" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+                    Relatório do item (PDF)
+                  </button>
+                  <button
+                    onClick={() => handleReport("process")}
+                    disabled={reportLoading !== null}
+                    title="Relatório completo do processo: todos os itens + documentos oficiais"
+                    className="inline-flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-3.5 py-1.5 text-xs font-semibold text-primary hover:bg-primary/15 transition-smooth disabled:opacity-60"
+                  >
+                    {reportLoading === "process" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderDown className="h-3.5 w-3.5" />}
+                    Relatório do processo (PDF)
+                  </button>
                   <button
                     onClick={runAi}
                     disabled={aiLoading}

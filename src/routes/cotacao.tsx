@@ -5,7 +5,8 @@ import { Trash2, ShoppingBasket, ExternalLink, FileSpreadsheet, FileText, Cloud,
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import { useBasket, getActiveBasketId, setActiveBasketId } from "@/lib/basket";
-import { exportCotacaoPdf } from "@/lib/export-pdf";
+import { exportBasketReportPdf } from "@/lib/export-report-pdf";
+import { buildProcessDossier } from "@/lib/report.functions";
 import { saveBasket } from "@/lib/baskets.functions";
 import { useAuth } from "@/lib/auth";
 
@@ -30,8 +31,10 @@ function CotacaoPage() {
   const { items, remove, setQuantidade, clear } = useBasket();
   const auth = useAuth();
   const callSave = useServerFn(saveBasket);
+  const callDossier = useServerFn(buildProcessDossier);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
 
   async function saveToCloud() {
     if (!auth.isAuthenticated || items.length === 0) return;
@@ -118,26 +121,52 @@ function CotacaoPage() {
     URL.revokeObjectURL(url);
   };
 
-  const exportPDF = () => {
-    exportCotacaoPdf({
-      rows: totals.rows.map((r) => ({
-        titulo: r.item.objetoEstruturado || r.item.titulo,
-        unidade: r.item.unidade ?? null,
-        quantidade: r.quantidade,
-        unitario: r.unit,
-        subtotal: r.subtotal,
-        fornecedor: r.item.fornecedor ?? null,
-        cnpj: r.item.cnpj ?? null,
-        orgao: r.item.orgao ?? null,
-        uf: r.item.uf ?? null,
-        data: r.item.data ?? null,
-        origem: r.item.origem,
-        url: r.item.url ?? null,
-      })),
-      totalGeral: totals.totalGeral,
-      media: totals.media,
-      mediana: totals.mediana,
-    });
+  const exportPDF = async () => {
+    if (pdfLoading) return;
+    setPdfLoading(true);
+    try {
+      // Busca dossier de cada processo distinto em paralelo (até 6 por vez)
+      const seen = new Map<string, ReturnType<typeof callDossier>>();
+      for (const r of totals.rows) {
+        const key = r.item.url || `${r.item.origem}|${r.item.titulo}`;
+        if (seen.has(key)) continue;
+        seen.set(
+          key,
+          callDossier({
+            data: {
+              origem: r.item.origem,
+              url: r.item.url,
+              fallback: {
+                orgao: r.item.orgao,
+                modalidade: r.item.modalidade,
+                municipio: r.item.municipio,
+                uf: r.item.uf,
+                dataPublicacao: r.item.data,
+                objetoCompra: r.item.descricao,
+              },
+            },
+          }),
+        );
+      }
+      const resolved = new Map<string, Awaited<ReturnType<typeof callDossier>>>();
+      await Promise.all(
+        Array.from(seen.entries()).map(async ([k, p]) => {
+          try { resolved.set(k, await p); } catch { /* tolera */ }
+        }),
+      );
+      await exportBasketReportPdf(
+        totals.rows.map((r) => ({
+          item: r.item,
+          quantidadeCotada: r.quantidade,
+          dossier: resolved.get(r.item.url || `${r.item.origem}|${r.item.titulo}`) ?? null,
+        })),
+        { totalGeral: totals.totalGeral, media: totals.media, mediana: totals.mediana },
+      );
+    } catch (e) {
+      alert("Falha ao gerar PDF: " + (e as Error).message);
+    } finally {
+      setPdfLoading(false);
+    }
   };
 
   return (
@@ -187,9 +216,11 @@ function CotacaoPage() {
                   )}
                   <button
                     onClick={exportPDF}
+                    disabled={pdfLoading}
                     className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground hover:opacity-90 transition-smooth"
                   >
-                    <FileText className="h-3.5 w-3.5" /> Nota Técnica (PDF)
+                    {pdfLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+                    {pdfLoading ? "Gerando relatório…" : "Relatório completo (PDF)"}
                   </button>
                   <button
                     onClick={exportCotacaoCSV}
