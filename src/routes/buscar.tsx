@@ -11,6 +11,7 @@ import { ResultsTable } from "@/components/ResultsTable";
 import { ResultModal } from "@/components/ResultModal";
 import { searchDbItems } from "@/lib/db-search.functions";
 import { useSearchStream } from "@/lib/search-stream";
+import { recordSearchMetric } from "@/lib/search-telemetry";
 import { exportCSV, exportJSON, exportTXT } from "@/lib/export";
 import { useBasket } from "@/lib/basket";
 import type { PriceResult } from "@/lib/types";
@@ -147,6 +148,26 @@ function Buscar() {
   }, [stream.items, stream.done, stream.tookMs, stream.finalSources, stream.fromCache, stream.final?.cachedAt, q]);
   const isFetching = !stream.done && q.trim().length >= 2;
   const error = stream.error;
+
+  // Telemetria: registra métrica quando a busca conclui (cache hit, duração, etc.)
+  useEffect(() => {
+    if (!stream.done || q.trim().length < 2) return;
+    const isTimeout = stream.log.some((l) => l.kind === "timeout");
+    recordSearchMetric({
+      query: q.trim(),
+      tema: tema.trim() || undefined,
+      startedAt: Date.now() - stream.tookMs,
+      finishedAt: Date.now(),
+      durationMs: stream.tookMs,
+      resultCount: stream.items.length,
+      sourceCount: stream.finalSources?.length ?? stream.sources.length,
+      cacheHit: stream.fromCache,
+      timeoutOccurred: isTimeout,
+      error: stream.error?.message,
+    });
+    // só dispara uma vez por busca concluída
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stream.done, streamKey]);
 
   // DB-first: busca instantânea no banco local (zero créditos) em paralelo
   // com a busca remota. Resultados aparecem no topo enquanto a remota carrega.
