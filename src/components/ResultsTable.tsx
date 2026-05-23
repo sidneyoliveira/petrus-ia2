@@ -20,6 +20,7 @@ import {
 import type { PriceResult } from "@/lib/types";
 import { buildHighlightUrl } from "@/lib/highlight-source";
 import { CorrectionDialog } from "@/components/CorrectionDialog";
+import { MathStatusIndicator } from "@/components/MathStatusIndicator";
 
 function brl(v?: number | null) {
   if (typeof v !== "number") return "—";
@@ -149,6 +150,16 @@ export function ResultsTable({
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-sm">
                       {brl(item.valorTotal ?? item.valorTotalCalculado)}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <MathStatusIndicator
+                        status={item.mathStatus}
+                        delta={item.mathDeltaPct}
+                        quantidade={item.quantidade}
+                        valor={item.valor}
+                        valorTotal={item.valorTotal}
+                        compact
+                      />
                     </TableCell>
                     <TableCell className="text-xs">
                       <div className="line-clamp-2" title={item.orgao}>
