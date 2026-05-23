@@ -321,6 +321,112 @@ function Buscar() {
     });
   };
 
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+
+  const filtersForm = (
+    <div className="space-y-5">
+      <div>
+        <label className="text-xs text-muted-foreground mb-1.5 block">Ordenar por</label>
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="compat">Maior compatibilidade</option>
+          <option value="semantico">Mais similares (semântico)</option>
+          <option value="juridico">Maior conformidade jurídica</option>
+          <option value="valorMedio">Mais próximos do valor médio</option>
+          <option value="valorAsc">Menor valor</option>
+          <option value="valorDesc">Maior valor</option>
+          <option value="dataRecente">Mais recentes</option>
+        </select>
+      </div>
+      <div>
+        <label className="text-xs text-muted-foreground mb-1.5 block">Tipo de pesquisa</label>
+        <select
+          value={mode}
+          onChange={(e) => setMode(e.target.value as typeof mode)}
+          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="semantic">Semelhante (IA)</option>
+          <option value="all_keywords">Todas as palavras do título</option>
+          <option value="exact">Exata (sem expansão)</option>
+        </select>
+      </div>
+      <div>
+        <label className="text-xs text-muted-foreground mb-1.5 block">Priorizar palavras-chave</label>
+        <input
+          value={keywordsInput}
+          onChange={(e) => setKeywordsInput(e.target.value)}
+          placeholder="ex.: juvenil, unissex, elástico"
+          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+        />
+        <div className="text-[10px] text-muted-foreground mt-1">Separe por vírgula. Reordena/filtra localmente sem refazer a busca.</div>
+      </div>
+      <div className="flex items-center gap-2 pt-1">
+        <SlidersHorizontal className="h-4 w-4 text-accent" />
+        <div className="font-semibold text-sm">Filtros</div>
+      </div>
+      <div className="space-y-4 text-sm">
+        <div>
+          <label className="text-xs text-muted-foreground mb-1.5 block">UF</label>
+          <select
+            value={filters.uf}
+            onChange={(e) => setFilters({ ...filters, uf: e.target.value })}
+            className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Todas</option>
+            {UFS.map((u) => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1.5 block">Unidade</label>
+          <input
+            value={filters.unidade}
+            onChange={(e) => setFilters({ ...filters, unidade: e.target.value })}
+            placeholder="Ex. UN, CX, KG, PC"
+            className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring uppercase"
+          />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1.5 block">Faixa de valor (R$)</label>
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              inputMode="decimal"
+              value={filters.valorMin}
+              onChange={(e) => setFilters({ ...filters, valorMin: e.target.value })}
+              placeholder="Mín."
+              className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring tabular-nums"
+            />
+            <input
+              inputMode="decimal"
+              value={filters.valorMax}
+              onChange={(e) => setFilters({ ...filters, valorMax: e.target.value })}
+              placeholder="Máx."
+              className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring tabular-nums"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1.5 block">Score mínimo</label>
+          <input
+            type="range" min={0} max={90} step={5}
+            value={filters.minScore}
+            onChange={(e) => setFilters({ ...filters, minScore: Number(e.target.value) })}
+            className="w-full accent-accent"
+          />
+          <div className="text-[11px] text-muted-foreground tabular-nums">≥ {filters.minScore}%</div>
+        </div>
+        <button
+          onClick={() => setFilters({ uf: "", unidade: "", minScore: 0, valorMin: "", valorMax: "" })}
+          className="w-full mt-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-secondary transition-smooth"
+        >
+          Limpar filtros
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <SiteHeader />
