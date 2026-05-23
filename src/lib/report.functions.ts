@@ -36,6 +36,16 @@ export interface ProcessDossierAta {
   arquivos: ProcessDossierArquivo[];
 }
 
+export interface ProcessDossierContrato {
+  numeroContrato?: string;
+  fornecedor?: string;
+  cnpjFornecedor?: string;
+  valorInicial?: number;
+  vigenciaInicio?: string;
+  vigenciaFim?: string;
+  arquivos: ProcessDossierArquivo[];
+}
+
 export interface ProcessDossierItem {
   numeroItem: number;
   descricao: string;
@@ -68,6 +78,7 @@ export interface ProcessDossier {
   itens: ProcessDossierItem[];
   arquivos: ProcessDossierArquivo[];
   atas: ProcessDossierAta[];
+  contratos: ProcessDossierContrato[];
   /** True se conseguimos buscar dados oficiais ao vivo na API do PNCP. */
   liveData: boolean;
   warnings: string[];
@@ -222,6 +233,80 @@ async function fetchCompraAtas(
   return out;
 }
 
+interface PncpContratoRaw {
+  numeroContratoEmpenho?: string;
+  numeroContrato?: string;
+  sequencialContrato?: number;
+  niFornecedor?: string;
+  nomeRazaoSocialFornecedor?: string;
+  valorInicial?: number;
+  dataVigenciaInicio?: string;
+  dataVigenciaFim?: string;
+  vigenciaInicio?: string;
+  vigenciaFim?: string;
+  orgaoEntidade?: { cnpj?: string };
+  anoContrato?: number;
+}
+
+async function fetchContratoArquivos(
+  cnpj: string,
+  ano: string,
+  seq: string | number,
+): Promise<ProcessDossierArquivo[]> {
+  const url = `https://pncp.gov.br/api/pncp/v1/orgaos/${cnpj}/contratos/${ano}/${seq}/arquivos`;
+  const j = await pncpFetchJson<PncpArquivoRaw[] | { data?: PncpArquivoRaw[] }>(url, {
+    timeoutMs: 10_000,
+    attempts: 2,
+  });
+  if (!j) return [];
+  const arr = Array.isArray(j) ? j : (j.data ?? []);
+  return arr
+    .filter((a) => a && (a.statusAtivo ?? true))
+    .map((a) => ({
+      titulo: (a.titulo || a.tipoDocumentoNome || "Contrato").trim(),
+      tipo: a.tipoDocumentoNome || "Contrato",
+      url: a.url || a.uri || "",
+      data: a.dataPublicacaoPncp,
+    }))
+    .filter((a) => a.url);
+}
+
+async function fetchCompraContratos(
+  cnpj: string,
+  ano: string,
+  seq: string,
+): Promise<ProcessDossierContrato[]> {
+  const url = `https://pncp.gov.br/api/pncp/v1/orgaos/${cnpj}/compras/${ano}/${seq}/contratos`;
+  const j = await pncpFetchJson<PncpContratoRaw[] | { data?: PncpContratoRaw[] }>(url, {
+    timeoutMs: 10_000,
+    attempts: 2,
+  });
+  if (!j) return [];
+  const arr = Array.isArray(j) ? j : (j.data ?? []);
+  if (arr.length === 0) return [];
+  const limited = arr.slice(0, 8);
+  const out: ProcessDossierContrato[] = [];
+  await Promise.all(
+    limited.map(async (c) => {
+      const cCnpj = c.orgaoEntidade?.cnpj ?? cnpj;
+      const cAno = c.anoContrato ? String(c.anoContrato) : ano;
+      const cSeq = c.sequencialContrato ?? c.numeroContrato ?? c.numeroContratoEmpenho;
+      if (!cSeq) return;
+      const arquivos = await fetchContratoArquivos(cCnpj, cAno, cSeq).catch(() => []);
+      out.push({
+        numeroContrato: c.numeroContrato ?? c.numeroContratoEmpenho ?? String(cSeq),
+        fornecedor: c.nomeRazaoSocialFornecedor,
+        cnpjFornecedor: c.niFornecedor,
+        valorInicial: brl(c.valorInicial),
+        vigenciaInicio: c.vigenciaInicio ?? c.dataVigenciaInicio,
+        vigenciaFim: c.vigenciaFim ?? c.dataVigenciaFim,
+        arquivos,
+      });
+    }),
+  );
+  return out;
+}
+
 function brl(n?: number | null) {
   if (typeof n !== "number" || !Number.isFinite(n)) return undefined;
   return n;
@@ -326,17 +411,21 @@ export const buildProcessDossier = createServerFn({ method: "POST" })
         itens: [],
         arquivos: [],
         atas: [],
+        contratos: [],
         liveData: false,
         warnings,
       };
     }
 
     // PNCP: busca paralela detalhe + itens + arquivos
-    const [detalhe, itensRaw, arquivos, atas] = await Promise.all([
+    const [detalhe, itensRaw, arquivos, atas, contratos] = await Promise.all([
       fetchCompraDetalhe(cnpj, ano, sequencial),
       fetchCompraItens(cnpj, ano, sequencial),
       fetchCompraArquivos(cnpj, ano, sequencial),
       fetchCompraAtas(cnpj, ano, sequencial).catch(() => [] as ProcessDossierAta[]),
+      fetchCompraContratos(cnpj, ano, sequencial).catch(
+        () => [] as ProcessDossierContrato[],
+      ),
     ]);
 
     if (!detalhe) {
@@ -374,6 +463,7 @@ export const buildProcessDossier = createServerFn({ method: "POST" })
       itens,
       arquivos,
       atas,
+      contratos,
       liveData: Boolean(detalhe) || itens.length > 0,
       warnings,
     };
