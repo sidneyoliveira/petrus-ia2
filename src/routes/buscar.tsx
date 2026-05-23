@@ -493,6 +493,23 @@ function Buscar() {
                 />
               </div>
             </form>
+            {tema && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Tema ativo</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTemaInput("");
+                    navigate({ to: "/buscar", search: { q, tema: "" } });
+                  }}
+                  title="Remover filtro de tema"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-0.5 text-[11px] text-accent hover:bg-accent/20 transition-smooth"
+                >
+                  {tema}
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <div className="text-xs text-muted-foreground">
                 {data ? (
@@ -503,6 +520,22 @@ function Buscar() {
                   </>
                 ) : q ? "Buscando..." : "Digite um termo para pesquisar."}
               </div>
+              <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+                <SheetTrigger asChild>
+                  <button
+                    type="button"
+                    className="lg:hidden inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs hover:bg-secondary transition-smooth"
+                  >
+                    <SlidersHorizontal className="h-3.5 w-3.5" /> Filtros avançados
+                  </button>
+                </SheetTrigger>
+                <SheetContent side="left" className="w-[88vw] sm:w-[380px] overflow-y-auto">
+                  <SheetHeader>
+                    <SheetTitle>Filtros avançados</SheetTitle>
+                  </SheetHeader>
+                  <div className="mt-4">{filtersForm}</div>
+                </SheetContent>
+              </Sheet>
               {data?.fromCache && (
                 <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] text-muted-foreground">
                   {refreshing ? (
