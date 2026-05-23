@@ -16,6 +16,8 @@ import {
   Bookmark,
   Wrench,
   Database,
+  ShoppingBasket,
+  Check,
 } from "lucide-react";
 import type { PriceResult } from "@/lib/types";
 import { buildHighlightUrl } from "@/lib/highlight-source";
@@ -85,7 +87,7 @@ export function ResultsTable({
               <TableHead className="w-28">Data</TableHead>
               <TableHead className="min-w-[180px]">Fornecedor</TableHead>
               <TableHead className="w-20 text-right">Compat.</TableHead>
-              <TableHead className="w-12"></TableHead>
+              <TableHead className="w-20"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -199,17 +201,37 @@ export function ResultsTable({
                       </span>
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
-                      {onSave && (
-                        <button
-                          onClick={() => onSave(item)}
-                          aria-label="Salvar"
-                          className={`inline-flex h-7 w-7 items-center justify-center rounded-md border border-border ${
-                            isSaved ? "bg-accent text-accent-foreground" : "hover:bg-secondary"
-                          }`}
-                        >
-                          <Bookmark className="h-3.5 w-3.5" fill={isSaved ? "currentColor" : "none"} />
-                        </button>
-                      )}
+                      <div className="flex items-center gap-1">
+                        {onAddToBasket && (
+                          <button
+                            onClick={() => onAddToBasket(item)}
+                            aria-label={inBasket ? "Remover da cotação" : "Adicionar à cotação"}
+                            title={inBasket ? "Na cotação — clique p/ remover" : "Adicionar à cotação"}
+                            className={`inline-flex h-7 w-7 items-center justify-center rounded-md border transition-smooth ${
+                              inBasket
+                                ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                                : "border-border text-muted-foreground hover:bg-secondary hover:text-foreground"
+                            }`}
+                          >
+                            {inBasket ? (
+                              <Check className="h-3.5 w-3.5" />
+                            ) : (
+                              <ShoppingBasket className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        )}
+                        {onSave && (
+                          <button
+                            onClick={() => onSave(item)}
+                            aria-label="Salvar"
+                            className={`inline-flex h-7 w-7 items-center justify-center rounded-md border border-border ${
+                              isSaved ? "bg-accent text-accent-foreground" : "hover:bg-secondary"
+                            }`}
+                          >
+                            <Bookmark className="h-3.5 w-3.5" fill={isSaved ? "currentColor" : "none"} />
+                          </button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                   {isOpen && (

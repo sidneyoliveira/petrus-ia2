@@ -3,9 +3,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
-import { Search, Loader2, Sparkles, Download, FileText, FileJson, FileSpreadsheet, SlidersHorizontal, AlertCircle, Database, RefreshCw, LayoutGrid, Rows3, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp } from "lucide-react";
+import { Search, Loader2, Sparkles, Download, FileText, FileJson, FileSpreadsheet, SlidersHorizontal, AlertCircle, Database, RefreshCw, LayoutGrid, Rows3, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp, X } from "lucide-react";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { ResultCard } from "@/components/ResultCard";
 import { ResultsTable } from "@/components/ResultsTable";
 import { ResultModal } from "@/components/ResultModal";
@@ -320,6 +321,112 @@ function Buscar() {
     });
   };
 
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+
+  const filtersForm = (
+    <div className="space-y-5">
+      <div>
+        <label className="text-xs text-muted-foreground mb-1.5 block">Ordenar por</label>
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="compat">Maior compatibilidade</option>
+          <option value="semantico">Mais similares (semântico)</option>
+          <option value="juridico">Maior conformidade jurídica</option>
+          <option value="valorMedio">Mais próximos do valor médio</option>
+          <option value="valorAsc">Menor valor</option>
+          <option value="valorDesc">Maior valor</option>
+          <option value="dataRecente">Mais recentes</option>
+        </select>
+      </div>
+      <div>
+        <label className="text-xs text-muted-foreground mb-1.5 block">Tipo de pesquisa</label>
+        <select
+          value={mode}
+          onChange={(e) => setMode(e.target.value as typeof mode)}
+          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="semantic">Semelhante (IA)</option>
+          <option value="all_keywords">Todas as palavras do título</option>
+          <option value="exact">Exata (sem expansão)</option>
+        </select>
+      </div>
+      <div>
+        <label className="text-xs text-muted-foreground mb-1.5 block">Priorizar palavras-chave</label>
+        <input
+          value={keywordsInput}
+          onChange={(e) => setKeywordsInput(e.target.value)}
+          placeholder="ex.: juvenil, unissex, elástico"
+          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+        />
+        <div className="text-[10px] text-muted-foreground mt-1">Separe por vírgula. Reordena/filtra localmente sem refazer a busca.</div>
+      </div>
+      <div className="flex items-center gap-2 pt-1">
+        <SlidersHorizontal className="h-4 w-4 text-accent" />
+        <div className="font-semibold text-sm">Filtros</div>
+      </div>
+      <div className="space-y-4 text-sm">
+        <div>
+          <label className="text-xs text-muted-foreground mb-1.5 block">UF</label>
+          <select
+            value={filters.uf}
+            onChange={(e) => setFilters({ ...filters, uf: e.target.value })}
+            className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">Todas</option>
+            {UFS.map((u) => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1.5 block">Unidade</label>
+          <input
+            value={filters.unidade}
+            onChange={(e) => setFilters({ ...filters, unidade: e.target.value })}
+            placeholder="Ex. UN, CX, KG, PC"
+            className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring uppercase"
+          />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1.5 block">Faixa de valor (R$)</label>
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              inputMode="decimal"
+              value={filters.valorMin}
+              onChange={(e) => setFilters({ ...filters, valorMin: e.target.value })}
+              placeholder="Mín."
+              className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring tabular-nums"
+            />
+            <input
+              inputMode="decimal"
+              value={filters.valorMax}
+              onChange={(e) => setFilters({ ...filters, valorMax: e.target.value })}
+              placeholder="Máx."
+              className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring tabular-nums"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1.5 block">Score mínimo</label>
+          <input
+            type="range" min={0} max={90} step={5}
+            value={filters.minScore}
+            onChange={(e) => setFilters({ ...filters, minScore: Number(e.target.value) })}
+            className="w-full accent-accent"
+          />
+          <div className="text-[11px] text-muted-foreground tabular-nums">≥ {filters.minScore}%</div>
+        </div>
+        <button
+          onClick={() => setFilters({ uf: "", unidade: "", minScore: 0, valorMin: "", valorMax: "" })}
+          className="w-full mt-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-secondary transition-smooth"
+        >
+          Limpar filtros
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <SiteHeader />
@@ -386,6 +493,23 @@ function Buscar() {
                 />
               </div>
             </form>
+            {tema && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Tema ativo</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTemaInput("");
+                    navigate({ to: "/buscar", search: { q, tema: "" } });
+                  }}
+                  title="Remover filtro de tema"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-0.5 text-[11px] text-accent hover:bg-accent/20 transition-smooth"
+                >
+                  {tema}
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <div className="text-xs text-muted-foreground">
                 {data ? (
@@ -396,6 +520,22 @@ function Buscar() {
                   </>
                 ) : q ? "Buscando..." : "Digite um termo para pesquisar."}
               </div>
+              <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+                <SheetTrigger asChild>
+                  <button
+                    type="button"
+                    className="lg:hidden inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs hover:bg-secondary transition-smooth"
+                  >
+                    <SlidersHorizontal className="h-3.5 w-3.5" /> Filtros avançados
+                  </button>
+                </SheetTrigger>
+                <SheetContent side="left" className="w-[88vw] sm:w-[380px] overflow-y-auto">
+                  <SheetHeader>
+                    <SheetTitle>Filtros avançados</SheetTitle>
+                  </SheetHeader>
+                  <div className="mt-4">{filtersForm}</div>
+                </SheetContent>
+              </Sheet>
               {data?.fromCache && (
                 <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] text-muted-foreground">
                   {refreshing ? (
@@ -456,117 +596,10 @@ function Buscar() {
         </section>
 
         <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 py-8 grid lg:grid-cols-[240px_minmax(0,1fr)] gap-6">
-          {/* Filters */}
-          <aside className="space-y-6">
+          {/* Filters — desktop (lg+) sidebar */}
+          <aside className="hidden lg:block space-y-6">
             <div className="rounded-xl border border-border bg-card p-5 shadow-card sticky top-20">
-              {/* Ordenação */}
-              <div className="mb-5">
-                <label className="text-xs text-muted-foreground mb-1.5 block">Ordenar por</label>
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-                  className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="compat">Maior compatibilidade</option>
-                  <option value="semantico">Mais similares (semântico)</option>
-                  <option value="juridico">Maior conformidade jurídica</option>
-                  <option value="valorMedio">Mais próximos do valor médio</option>
-                  <option value="valorAsc">Menor valor</option>
-                  <option value="valorDesc">Maior valor</option>
-                  <option value="dataRecente">Mais recentes</option>
-                </select>
-              </div>
-
-              <div className="mb-5">
-                <label className="text-xs text-muted-foreground mb-1.5 block">Tipo de pesquisa</label>
-                <select
-                  value={mode}
-                  onChange={(e) => setMode(e.target.value as typeof mode)}
-                  className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="semantic">Semelhante (IA)</option>
-                  <option value="all_keywords">Todas as palavras do título</option>
-                  <option value="exact">Exata (sem expansão)</option>
-                </select>
-              </div>
-
-              <div className="mb-5">
-                <label className="text-xs text-muted-foreground mb-1.5 block">Priorizar palavras-chave</label>
-                <input
-                  value={keywordsInput}
-                  onChange={(e) => setKeywordsInput(e.target.value)}
-                  placeholder="ex.: juvenil, unissex, elástico"
-                  className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
-                />
-                <div className="text-[10px] text-muted-foreground mt-1">Separe por vírgula. Reordena/filtra localmente sem refazer a busca.</div>
-              </div>
-
-              <div className="flex items-center gap-2 mb-4">
-                <SlidersHorizontal className="h-4 w-4 text-accent" />
-                <div className="font-semibold text-sm">Filtros</div>
-              </div>
-
-              <div className="space-y-4 text-sm">
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1.5 block">UF</label>
-                  <select
-                    value={filters.uf}
-                    onChange={(e) => setFilters({ ...filters, uf: e.target.value })}
-                    className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
-                  >
-                    <option value="">Todas</option>
-                    {UFS.map((u) => <option key={u} value={u}>{u}</option>)}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1.5 block">Unidade</label>
-                  <input
-                    value={filters.unidade}
-                    onChange={(e) => setFilters({ ...filters, unidade: e.target.value })}
-                    placeholder="Ex. UN, CX, KG, PC"
-                    className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring uppercase"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1.5 block">Faixa de valor (R$)</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      inputMode="decimal"
-                      value={filters.valorMin}
-                      onChange={(e) => setFilters({ ...filters, valorMin: e.target.value })}
-                      placeholder="Mín."
-                      className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring tabular-nums"
-                    />
-                    <input
-                      inputMode="decimal"
-                      value={filters.valorMax}
-                      onChange={(e) => setFilters({ ...filters, valorMax: e.target.value })}
-                      placeholder="Máx."
-                      className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring tabular-nums"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1.5 block">Score mínimo</label>
-                  <input
-                    type="range" min={0} max={90} step={5}
-                    value={filters.minScore}
-                    onChange={(e) => setFilters({ ...filters, minScore: Number(e.target.value) })}
-                    className="w-full accent-accent"
-                  />
-                  <div className="text-[11px] text-muted-foreground tabular-nums">≥ {filters.minScore}%</div>
-                </div>
-
-                <button
-                  onClick={() => setFilters({ uf: "", unidade: "", minScore: 0, valorMin: "", valorMax: "" })}
-                  className="w-full mt-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-secondary transition-smooth"
-                >
-                  Limpar filtros
-                </button>
-              </div>
+              {filtersForm}
             </div>
 
             {saved.size > 0 && (
