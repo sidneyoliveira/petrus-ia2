@@ -87,7 +87,7 @@ export function ResultsTable({
               <TableHead className="w-28">Data</TableHead>
               <TableHead className="min-w-[180px]">Fornecedor</TableHead>
               <TableHead className="w-20 text-right">Compat.</TableHead>
-              <TableHead className="w-12"></TableHead>
+              <TableHead className="w-20"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
