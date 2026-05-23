@@ -457,8 +457,8 @@ function Buscar() {
         </section>
 
         <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 py-8 grid lg:grid-cols-[240px_minmax(0,1fr)] gap-6">
-          {/* Filters */}
-          <aside className="space-y-6">
+          {/* Filters — desktop (lg+) sidebar */}
+          <aside className="hidden lg:block space-y-6">
             <div className="rounded-xl border border-border bg-card p-5 shadow-card sticky top-20">
               {/* Ordenação */}
               <div className="mb-5">
