@@ -197,7 +197,7 @@ export function ResultsTable({
                   </TableRow>
                   {isOpen && (
                     <TableRow className="bg-muted/20 hover:bg-muted/20">
-                      <TableCell colSpan={11} className="p-5">
+                      <TableCell colSpan={12} className="p-5">
                         <div className="grid md:grid-cols-[1fr_auto] gap-4">
                           <div className="min-w-0">
                             <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
