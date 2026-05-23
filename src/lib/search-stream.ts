@@ -50,6 +50,9 @@ export interface SearchStreamInput {
   keywords?: string[];
   forceRefresh?: boolean;
   pagina?: number;
+  /** Limite máximo (ms) para o stream inteiro. Se excedido, aborta e mantém
+   *  os resultados parciais já recebidos. Padrão: 60000 (60 s). */
+  timeoutMs?: number;
 }
 
 /**
@@ -88,6 +91,24 @@ export function useSearchStream(
     abortRef.current = ctrl;
     const started = Date.now();
     setState({ ...INITIAL });
+
+    const timeoutMs = input.timeoutMs ?? 60_000;
+    const timeoutId = setTimeout(() => {
+      if (!ctrl.signal.aborted) {
+        console.warn(`[busca] timeout client após ${timeoutMs}ms — entregando parciais`);
+        setState((s) => ({
+          ...s,
+          done: true,
+          inflight: [],
+          tookMs: Date.now() - started,
+          log: [
+            ...s.log,
+            { ts: Date.now(), kind: "timeout", text: `⏱ timeout client (${timeoutMs}ms) — parciais` },
+          ],
+        }));
+        ctrl.abort();
+      }
+    }, timeoutMs);
 
     (async () => {
       try {
@@ -217,6 +238,8 @@ export function useSearchStream(
       } catch (err) {
         if ((err as Error).name === "AbortError") return;
         setState((s) => ({ ...s, error: err as Error, done: true }));
+      } finally {
+        clearTimeout(timeoutId);
       }
     })();
 
