@@ -391,7 +391,7 @@ function drawItensTable(
       overflow: "linebreak",
       textColor: 20,
     },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 8 },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 8, fontStyle: "normal" },
     bodyStyles: { fillColor: [255, 255, 255] },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     columnStyles: {
@@ -435,7 +435,7 @@ function drawContratosResumo(ctx: RenderCtx, contratos: ProcessDossierContrato[]
       c.cnpjFornecedor ? `CNPJ ${fmtCnpj(c.cnpjFornecedor)}` : null,
       typeof c.valorInicial === "number" ? `Valor ${brl(c.valorInicial)}` : null,
       c.vigenciaInicio || c.vigenciaFim
-        ? `Vigência ${fmtDate(c.vigenciaInicio)} → ${fmtDate(c.vigenciaFim)}`
+        ? `Vigência ${fmtDate(c.vigenciaInicio)} a ${fmtDate(c.vigenciaFim)}`
         : null,
     ]
       .filter(Boolean)
@@ -882,7 +882,7 @@ export function buildBasketReport(
           overflow: "linebreak",
           textColor: 20,
         },
-        headStyles: { fillColor: [30, 41, 59], textColor: 255 },
+        headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: "normal" },
         alternateRowStyles: { fillColor: [248, 250, 252] },
         columnStyles: {
           0: { cellWidth: 22, halign: "right" },
