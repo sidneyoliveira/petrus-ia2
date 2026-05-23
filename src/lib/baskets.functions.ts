@@ -14,7 +14,7 @@ export const listBaskets = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { data, error } = await context.supabase
       .from("baskets")
-      .select("id, name, items, created_at, updated_at")
+      .select("id, name, items, theme_id, created_at, updated_at")
       .order("updated_at", { ascending: false })
       .limit(100);
     if (error) throw new Error(error.message);
@@ -30,7 +30,7 @@ export const loadBasket = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { data: row, error } = await context.supabase
       .from("baskets")
-      .select("id, name, items, updated_at")
+      .select("id, name, items, theme_id, updated_at")
       .eq("id", data.id)
       .maybeSingle();
     if (error) throw new Error(error.message);
@@ -45,6 +45,7 @@ export const saveBasket = createServerFn({ method: "POST" })
         id: z.string().uuid().optional(),
         name: z.string().trim().min(1).max(120),
         items: z.array(BasketItemSchema).max(500),
+        themeId: z.string().uuid().nullable().optional(),
       })
       .parse(d),
   )
@@ -53,6 +54,7 @@ export const saveBasket = createServerFn({ method: "POST" })
       user_id: context.userId,
       name: data.name,
       items: data.items as unknown as never,
+      theme_id: data.themeId ?? null,
       updated_at: new Date().toISOString(),
     };
     if (data.id) {
@@ -60,7 +62,7 @@ export const saveBasket = createServerFn({ method: "POST" })
         .from("baskets")
         .update(payload)
         .eq("id", data.id)
-        .select("id, name, updated_at")
+        .select("id, name, theme_id, updated_at")
         .single();
       if (error) throw new Error(error.message);
       return row;
@@ -68,7 +70,7 @@ export const saveBasket = createServerFn({ method: "POST" })
     const { data: row, error } = await context.supabase
       .from("baskets")
       .insert(payload)
-      .select("id, name, updated_at")
+      .select("id, name, theme_id, updated_at")
       .single();
     if (error) throw new Error(error.message);
     return row;

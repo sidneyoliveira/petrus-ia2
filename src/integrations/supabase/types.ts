@@ -20,6 +20,7 @@ export type Database = {
           id: string
           items: Json
           name: string
+          theme_id: string | null
           updated_at: string
           user_id: string
         }
@@ -28,6 +29,7 @@ export type Database = {
           id?: string
           items?: Json
           name?: string
+          theme_id?: string | null
           updated_at?: string
           user_id: string
         }
@@ -36,10 +38,19 @@ export type Database = {
           id?: string
           items?: Json
           name?: string
+          theme_id?: string | null
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "baskets_theme_id_fkey"
+            columns: ["theme_id"]
+            isOneToOne: false
+            referencedRelation: "search_themes"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       cnpj_cache: {
         Row: {
@@ -524,6 +535,36 @@ export type Database = {
           reason?: string | null
           snapshot?: Json | null
           source?: string
+        }
+        Relationships: []
+      }
+      search_themes: {
+        Row: {
+          color: string
+          created_at: string
+          icon: string | null
+          id: string
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          color?: string
+          created_at?: string
+          icon?: string | null
+          id?: string
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          color?: string
+          created_at?: string
+          icon?: string | null
+          id?: string
+          name?: string
+          updated_at?: string
+          user_id?: string
         }
         Relationships: []
       }

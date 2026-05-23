@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { Trash2, ShoppingBasket, ExternalLink, FileSpreadsheet, FileText, Cloud, Loader2 } from "lucide-react";
 import { SiteHeader } from "@/components/SiteHeader";
@@ -10,6 +10,11 @@ import { ReportPreviewDialog } from "@/components/ReportPreviewDialog";
 import { buildProcessDossier } from "@/lib/report.functions";
 import { saveBasket } from "@/lib/baskets.functions";
 import { useAuth } from "@/lib/auth";
+import {
+  ThemeSelector,
+  getActiveThemeId,
+  setActiveThemeId,
+} from "@/components/ThemeSelector";
 
 export const Route = createFileRoute("/cotacao")({
   component: CotacaoPage,
@@ -37,6 +42,15 @@ function CotacaoPage() {
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [reportPlan, setReportPlan] = useState<ReportPlan | null>(null);
+  const [activeTheme, setActiveTheme] = useState<string | null>(() =>
+    typeof window !== "undefined" ? getActiveThemeId() : null,
+  );
+
+  useEffect(() => {
+    const sync = () => setActiveTheme(getActiveThemeId());
+    window.addEventListener("petrus:theme:changed", sync);
+    return () => window.removeEventListener("petrus:theme:changed", sync);
+  }, []);
 
   async function saveToCloud() {
     if (!auth.isAuthenticated || items.length === 0) return;
@@ -45,7 +59,7 @@ function CotacaoPage() {
       const id = getActiveBasketId() ?? undefined;
       const name = `Cesta de ${new Date().toLocaleString("pt-BR")}`;
       const row = await callSave({
-        data: { id, name, items: items as never },
+        data: { id, name, items: items as never, themeId: activeTheme },
       });
       if (row?.id) setActiveBasketId(row.id);
       setSavedAt(new Date().toLocaleTimeString("pt-BR"));
@@ -246,6 +260,17 @@ function CotacaoPage() {
         </section>
 
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
+          {auth.isAuthenticated && (
+            <div className="mb-4">
+              <ThemeSelector
+                value={activeTheme}
+                onChange={(id) => {
+                  setActiveTheme(id);
+                  setActiveThemeId(id);
+                }}
+              />
+            </div>
+          )}
           {items.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border bg-card/40 p-12 text-center">
               <div className="mx-auto h-12 w-12 rounded-full bg-accent/15 text-accent inline-flex items-center justify-center mb-4">

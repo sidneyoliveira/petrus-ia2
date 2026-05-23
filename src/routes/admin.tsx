@@ -17,6 +17,7 @@ import {
 import { useAuth } from "@/lib/auth";
 import { Trash2, Play, Plus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { getSourcesHealth } from "@/lib/sources-health.functions";
 
 export const Route = createFileRoute("/admin")({
   beforeLoad: async () => {
@@ -131,6 +132,8 @@ function AdminPage() {
 
         <HarvestSection />
 
+        <SourcesHealthSection />
+
         <section className="rounded-xl border border-border bg-card p-4 shadow-card">
           <h2 className="font-semibold text-sm">4. Backfill PNCP 180 dias (Inngest)</h2>
           <p className="text-xs text-muted-foreground mt-1">
@@ -151,6 +154,160 @@ function AdminPage() {
         </section>
       </main>
       <SiteFooter />
+    </div>
+  );
+}
+
+function SourcesHealthSection() {
+  const callHealth = useServerFn(getSourcesHealth);
+  const { data, isLoading, refetch, isFetching } = useQuery({
+    queryKey: ["sources-health"],
+    queryFn: () => callHealth(),
+    refetchInterval: 30_000,
+  });
+
+  const badge = (h: "healthy" | "warning" | "broken" | "idle") => {
+    if (h === "healthy") return "bg-success/20 text-success";
+    if (h === "warning") return "bg-warning/20 text-warning";
+    if (h === "broken") return "bg-destructive/20 text-destructive";
+    return "bg-muted text-muted-foreground";
+  };
+  const label = {
+    healthy: "ok",
+    warning: "instável",
+    broken: "quebrada",
+    idle: "ociosa",
+  } as const;
+
+  const rows = data?.sources ?? [];
+  const broken = rows.filter((r) => r.health === "broken").length;
+  const healthy = rows.filter((r) => r.health === "healthy").length;
+  const warning = rows.filter((r) => r.health === "warning").length;
+  const idle = rows.filter((r) => r.health === "idle").length;
+
+  return (
+    <section className="rounded-xl border border-border bg-card p-4 shadow-card">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="font-semibold text-sm">3.5 Saúde das fontes (7 dias)</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            Cruza o catálogo registrado em <code>price_sources</code> com a telemetria real de buscas
+            (<code>source_runs</code>). Mostra quais fontes estão produzindo resultados e quais
+            estão silenciosas/quebradas. Atualiza a cada 30s.
+          </p>
+        </div>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="text-[11px] rounded-md border border-border bg-card px-2 py-1 hover:bg-secondary disabled:opacity-50"
+        >
+          {isFetching ? "Atualizando…" : "Recarregar"}
+        </button>
+      </div>
+
+      {isLoading ? (
+        <p className="mt-3 text-xs text-muted-foreground">Carregando métricas…</p>
+      ) : (
+        <>
+          <div className="mt-3 grid grid-cols-4 gap-2 text-center">
+            <Pill label="OK" value={healthy} className="bg-success/10 text-success" />
+            <Pill label="Instável" value={warning} className="bg-warning/10 text-warning" />
+            <Pill label="Quebrada" value={broken} className="bg-destructive/10 text-destructive" />
+            <Pill label="Ociosa" value={idle} className="bg-muted text-muted-foreground" />
+          </div>
+
+          <div className="mt-4 max-h-96 overflow-auto rounded-md border border-border">
+            <table className="w-full text-[11px]">
+              <thead className="bg-muted/50 text-[10px] uppercase tracking-wider text-muted-foreground sticky top-0">
+                <tr>
+                  <th className="text-left px-2 py-1.5">Fonte</th>
+                  <th className="text-left px-2 py-1.5">Status</th>
+                  <th className="text-right px-2 py-1.5">Runs</th>
+                  <th className="text-right px-2 py-1.5">Itens</th>
+                  <th className="text-right px-2 py-1.5">Sucesso</th>
+                  <th className="text-right px-2 py-1.5">Avg ms</th>
+                  <th className="text-left px-2 py-1.5">Última</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-2 py-3 text-center text-muted-foreground">
+                      Nenhuma execução nos últimos 7 dias.
+                    </td>
+                  </tr>
+                )}
+                {rows.map((r) => (
+                  <tr key={r.id} className="border-t border-border align-top">
+                    <td className="px-2 py-1.5">
+                      <div className="font-medium">{r.name}</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {r.domain}
+                        {!r.registered && (
+                          <span className="ml-1 text-warning">(auto-descoberta)</span>
+                        )}
+                        {!r.enabled && (
+                          <span className="ml-1 text-destructive">desabilitada</span>
+                        )}
+                      </div>
+                      {r.lastError && (
+                        <div
+                          className="text-[10px] text-destructive mt-0.5 truncate max-w-[28rem]"
+                          title={r.lastError}
+                        >
+                          ⚠ {r.lastError}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <span
+                        className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${badge(r.health)}`}
+                      >
+                        {label[r.health]}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{r.runs}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{r.items}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">
+                      {r.runs > 0 ? `${Math.round(r.successRate * 100)}%` : "—"}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">
+                      {r.avgMs > 0 ? r.avgMs.toLocaleString("pt-BR") : "—"}
+                    </td>
+                    <td className="px-2 py-1.5 text-muted-foreground">
+                      {r.lastRun
+                        ? new Date(r.lastRun).toLocaleString("pt-BR")
+                        : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            <strong>Quebrada</strong> = sem itens nos últimos 7 dias ou taxa de sucesso &lt; 30%.{" "}
+            <strong>Ociosa</strong> = registrada no catálogo mas nunca consultada (ainda não foi
+            usada em buscas).
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
+
+function Pill({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: number;
+  className: string;
+}) {
+  return (
+    <div className={`rounded-md px-2 py-1.5 ${className}`}>
+      <div className="text-base font-semibold tabular-nums leading-none">{value}</div>
+      <div className="text-[10px] uppercase tracking-wider opacity-80 mt-0.5">{label}</div>
     </div>
   );
 }
