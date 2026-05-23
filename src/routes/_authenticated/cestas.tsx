@@ -21,6 +21,15 @@ import { listThemes } from "@/lib/themes.functions";
 import { calculateBasketStats } from "@/lib/basket-stats";
 import { useEffect } from "react";
 
+function brl(v?: number | null) {
+  if (typeof v !== "number" || !Number.isFinite(v)) return "—";
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    maximumFractionDigits: 0,
+  }).format(v);
+}
+
 export const Route = createFileRoute("/_authenticated/cestas")({
   component: CestasPage,
   head: () => ({
